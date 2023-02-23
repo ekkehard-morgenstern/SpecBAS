@@ -3,7 +3,7 @@ An enhanced Sinclair  BASIC interpreter for modern PCs
 
 ------------------
 
-FORK NOTICE - This is a fork of the original repository by ZXDunny. I created it to work on a FreePascal version of SpecBAS to make it portable to Linux.
+FORK NOTICE - This is a fork of the original repository by ZXDunny. I created it to work on a FreePascal version of SpecBAS to make it portable to Linux. ~~ Ekkehard Morgenstern
 
 ------------------
 
