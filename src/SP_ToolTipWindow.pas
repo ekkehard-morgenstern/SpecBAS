@@ -157,7 +157,6 @@ Begin
 
   If TipWindowID <> -1 Then CloseTipWindow;
 
-
   Font := FONTBANKID;
   SP_SetSystemFont(EDITORFONT, Error);
   DR_Window := SCREENBANK;
@@ -219,9 +218,11 @@ Begin
   // First check if we're on a control, and if so get its hint.
   ctrl := nil;
   Hint.Hint := '';
+  tX := TipMouseX;
+  tY := TipMouseY;
+  x := tx; y := ty;
   If MOUSEBTN = 0 Then Begin
     DisplaySection.Enter;
-    tX := TipMouseX; tY := TipMouseY; x := tx; y := ty;
     Win := WindowAtPoint(tX, tY, ID);
     If Assigned(Win) Then Begin
       Ctrl := pSP_BaseComponent(ControlAtPoint(Win, tX, tY));

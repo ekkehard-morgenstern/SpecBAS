@@ -161,7 +161,6 @@ Var
   SetDR: Boolean = False;
   DPtrBackup: Pointer;
   MOUSEPALETTE: Array[0..255] of TP_Colour;
-  RenderCount: NativeInt;
 
   {$IFDEF FPC}
   DispRects: Array[0..65535] of TRct;
@@ -623,14 +622,17 @@ End;
 
 Procedure SP_WaitForSync;
 Begin
-  Repeat
-    CB_YIELD;
-  Until Not CauseUpdate;
-  SP_NeedDisplayUpdate := True;
-  CauseUpdate := True;
-  Repeat
-    CB_YIELD;
-  Until Not CauseUpdate;
+  If RefreshThreadAlive Then Begin
+    If CauseUpdate Then Begin
+      While CauseUpdate and RefreshThreadAlive Do
+        CB_YIELD;
+      Exit;
+    End;
+    SP_NeedDisplayUpdate := True;
+    CauseUpdate := True;
+    While CauseUpdate and RefreshThreadAlive Do
+      CB_YIELD;
+  End;
 End;
 
 Procedure SP_SetDirtyRect(x1, y1, x2, y2: Integer);
@@ -1247,6 +1249,7 @@ Var
   BankIdx, Idx, Bits, NewBits: Integer;
   Bank: pSP_Bank;
   Window: pSP_Window_Info;
+  oW, oH: Integer;
   OldMem: Array of Byte;
   dPtr: pLongWord;
   sPtr: pByte;
@@ -1266,8 +1269,11 @@ Begin
     DisplaySection.Enter;
 
     Window := @Bank^.Info[0];
-    If W = -1 Then W := Window^.Width;
-    If H = -1 Then H := Window^.Height;
+    oW := Window^.Width;
+    oH := Window^.Height;
+
+    If W = -1 Then W := oW;
+    If H = -1 Then H := oH;
 
     Bits := Window^.bpp Div 8;
     If Depth <> -1 Then Begin
@@ -1343,9 +1349,10 @@ Begin
       Until Not SIZINGMAIN;
       SP_CLS(CPAPER);
       MOUSEVISIBLE := OldMouse;
-    End Else
+    End Else Begin
+      SP_CLS(CPAPER);
       DisplaySection.Leave;
-
+    End;
   End;
 
 End;
@@ -1968,7 +1975,8 @@ Procedure SP_Scroll(Dy: Integer);
 Var
   Dst: pLongWord;
   Src: pLongWord;
-  Amt, nDy, Paper: Integer;
+  Amt, nDy: Integer;
+  Paper: Longword;
 Begin
 
   If SCREENBPP = 8 Then Begin

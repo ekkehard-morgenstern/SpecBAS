@@ -116,10 +116,6 @@ Procedure SP_InsertLine(Index: Integer; Const l, s, c: aString; MarkDirty: Boole
 Procedure SP_DeleteLine(Index: Integer; MarkDirty: Boolean = True);
 Procedure SP_ClearListing;
 Function  SP_WasPrevSoft(Idx: Integer): Boolean; Inline;
-Procedure SP_CompiledListingAdd(const s: aString);
-Procedure SP_CompiledListingDelete(Idx: Integer);
-Procedure SP_CompiledListingInsert(Idx: Integer; const s: aString);
-Procedure SP_CompiledListingClear;
 Function  SP_GetLineExtents(Idx: Integer; FindStart: Boolean = False): TPoint;
 Function  SP_GetLineY(Line: Integer): Integer;
 Function  SP_LineFlags(Index: Integer): pLineFlags;
@@ -131,8 +127,7 @@ Procedure SP_FPCycleEditorWindows(HideMode: Integer);
 Procedure SP_AddFPScrollBars(AutoScroll: Boolean = True);
 Procedure SP_FPResizeWindow(NewH: Integer);
 Procedure SP_Decorate_Window(WindowID: Integer; Title: aString; Clear, SizeGrip, Focused: Boolean);
-Procedure SP_DrawStripe(Dst: pByte; Width, StripeWidth, StripeHeight: Integer; Focused: Boolean);
-Procedure SP_DrawBatteryStatus;
+Procedure SP_DrawStripe(Dst: pByte; Width, StripeWidth, StripeHeight, BatteryLevel: Integer; Focused: Boolean);
 Function  SP_SetFPEditorFont: Integer;
 Procedure SP_SwitchFocus(FocusMode: Integer);
 Procedure SP_FPNewProgram;
@@ -190,7 +185,6 @@ Function  SP_FindText(Text: aString; StartAtL, StartAtP: Integer; const Options:
 Procedure SP_DWPerformEdit(Key: pSP_KeyInfo);
 Procedure SP_DWStoreLine(Line: aString);
 Procedure SP_EditorDisplayEditLine;
-Procedure SP_CompileProgram;
 Procedure SP_FPExecuteEditLine(Var Line: aString);
 Function  SP_FPExecuteNumericExpression(Const Expr: aString; var Error: TSP_ErrorCode): aFloat;
 Function  SP_FPExecuteStringExpression(Const Expr: aString; var Error: TSP_ErrorCode): aString;
@@ -269,7 +263,7 @@ Var
   FPClientWidth, FPClientHeight, FPClientLeft, FPClientTop, FPPaperLeft, FPPaperTop, FPPaperWidth, FPPaperHeight: Integer;
   FPPageHeight, FPTotalHeight, FPPageWidth, FPTotalWidth, FPVertScrollPos, FPHorzScrollPos, FPLongestLineLen: Integer;
   FPListTopIndex, FPGutterWidth, FPCaptionHeight, FPStripePos: Integer;
-  Listing, SyntaxListing, CompiledListing: TAnsiStringlist;
+  Listing, SyntaxListing: TAnsiStringlist;
   LineLens: Array Of Integer;
   EdSc, EdCSc: aString;
   FPScrollBars: Array of SP_ScrollBar;
@@ -532,7 +526,6 @@ Begin
             If Error.Code = SP_ERR_OK Then Begin
 
               If (lIdx < Listing.Count) Then Begin
-                CompiledListing[lIdx] := Compiled;
                 If SP_CheckForConflict(lIdx) Then
                   Listing.Flags[lIdx].State := spLineDuplicate
                 Else
@@ -593,7 +586,6 @@ Begin
   CompilerLock := TCriticalSection.Create;
   Listing := TStringList.Create;
   SyntaxListing := TStringList.Create;
-  CompiledListing := TStringList.Create;
   Listing.OnChange := ListingChange;
   DWUndoList := TStringList.Create;
   DWRedoList := TStringlist.Create;
@@ -693,7 +685,6 @@ Begin
   CompilerLock.Free;
   Listing.Free;
   SyntaxListing.Free;
-  CompiledListing.Free;
   DWUndoList.Free;
   DWRedoList.Free;
 
@@ -706,7 +697,6 @@ Begin
   CompilerLock.Enter;
   Listing.Add(l);
   SyntaxListing.Add(l);
-  SP_CompiledListingAdd(c);
   nl := SP_LineHasNumber(Listing.Count -1);
   If (nl > 0) And Not SP_WasPrevSoft(Listing.Count -1) Then Begin
     Listing.Flags[Listing.Count -1].State := spLineDirty;
@@ -727,7 +717,6 @@ Begin
   CompilerLock.Enter;
   Listing.Insert(Index, l);
   SyntaxListing.Insert(Index, s);
-  SP_CompiledListingInsert(Index, c);
   i := SP_LineHasNumber(Index);
   Listing.Flags[Index].ReturnType := 0;
   Listing.Flags[Index].Indent := 0;
@@ -747,7 +736,6 @@ Var
 Begin
   CompilerLock.Enter;
   Listing.Delete(Index);
-  SP_CompiledListingDelete(Index);
   SyntaxListing.Delete(Index);
   If MarkDirty Then Begin
     For i := Index To Listing.Count -1 Do Begin
@@ -761,7 +749,6 @@ End;
 Procedure SP_ClearListing;
 Begin
   Listing.Clear;
-  SP_CompiledListingClear;
   SyntaxListing.Clear;
   ClearDirtyLines;
 End;
@@ -861,6 +848,37 @@ Begin
 
 End;
 
+Procedure SP_UpdateBatteryStatus;
+Var
+  Win: pSP_Window_Info;
+  Err: TSP_ErrorCode;
+  {$IFNDEF FPC}
+  SysPowerStatus: TSystemPowerStatus;
+  {$ENDIF}
+Begin
+
+  SP_GetWindowDetails(DWWindowID, Win, Err);
+  If Not Assigned(Win) Then Exit;
+
+  {$IFDEF PANDORA}
+  BATTLEVEL := StrToInt(ReadLinuxFile('/sys/class/power_supply/bq27500-0/capacity'));
+  {$ELSE}
+    {$IFNDEF FPC}
+      // Windows
+      GetSystemPowerStatus(SysPowerStatus);
+      Case SysPowerStatus.ACLineStatus of
+        1: BATTLEVEL := 100;
+        0: BATTLEVEL := SysPowerStatus.BatteryLifePercent;
+      end;
+    {$ELSE}
+      // put Darwin here
+    {$ENDIF}
+  {$ENDIF}
+
+  SP_DrawStripe(Win^.Surface, Win^.Width, FPFw, FPFh, BATTLEVEL, FocusedWindow = DWWindowID);
+
+End;
+
 Procedure SP_Decorate_Window(WindowID: Integer; Title: aString; Clear, SizeGrip, Focused: Boolean);
 Var
   Win: pSP_Window_Info;
@@ -902,8 +920,11 @@ Begin
   Else
     SP_TextOut(-1, FPFw Div 2, 1, EdSc + Title, capInactive, CapBack, True);
 
-  SP_DrawStripe(Win^.Surface, Win^.Width, FPFw, FPFh, Focused);
-  If WindowID = DWWindowID Then SP_DrawBatteryStatus;
+
+  If WindowID = DWWindowID Then
+    SP_UpdateBatteryStatus
+  else
+    SP_DrawStripe(Win^.Surface, Win^.Width, FPFw, FPFh, 100, Focused);
 
   If SizeGrip Then
     SP_TextOut(FONTBANKID, Win^.Width -(Fw + 6), Win^.Height - (Fh + 6), EdCSc + #250, gripClr, winBack, True);
@@ -914,9 +935,9 @@ Begin
 
 End;
 
-Procedure SP_DrawStripe(Dst: pByte; Width, StripeWidth, StripeHeight: Integer; Focused: Boolean);
+Procedure SP_DrawStripe(Dst: pByte; Width, StripeWidth, StripeHeight, BatteryLevel: Integer; Focused: Boolean);
 Var
-  X, Y, X2, i: Integer;
+  X, Y, X2, i, bw, sw: Integer;
   oPtr: pByte;
 Const
   ClrsFocused: Array[0..3] of Byte   = (2, 6, 4, 5);
@@ -925,88 +946,24 @@ Begin
 
   If Width < 160 Then Exit;
 
-  X := Width - ((StripeWidth * 4)) - StripeHeight;
+  sw := StripeWidth * 4;
+  X := Width - sw - StripeHeight;
   FPStripePos := X;
   oPtr := pByte(NativeUInt(Dst) + (Width * StripeHeight) + X);
+
+  bw := Round((BatteryLevel / 100) * (sw -2));
 
   For Y := StripeHeight DownTo 1 Do Begin
     For X2 := X to X + (StripeWidth * 4) -1 Do Begin
       i := (X2 - X) Div StripeWidth;
-      If Focused Then
-        oPtr^ := ClrsFocused[i] + (8 * Ord(i < 3))
-      Else
-        oPtr^ := ClrsUnFocused[i];
+      If ((Y = StripeHeight) or (Y = 1) or (X2 = X) or (X2 = X + SW -1)) or (X2 < bw + X + 1) Then
+        If Focused Then
+          oPtr^ := ClrsFocused[i] + (8 * Ord(i < 3))
+        Else
+          oPtr^ := ClrsUnFocused[i];
       inc(oPtr);
     End;
     Dec(oPtr, Width + (StripeWidth * 4) - (y and 1)); // change "(y and 1)" to "1" for 45 degree stripes
-  End;
-
-End;
-
-Procedure SP_DrawBatteryStatus;
-Var
-  Idx, X, Y, BattW, PixW, Font, Window: Integer;
-  PixPtr: pByte;
-  Win: pSP_Window_Info;
-  Err: TSP_ErrorCode;
-  {$IFNDEF FPC}
-  SysPowerStatus: TSystemPowerStatus;
-  {$ENDIF}
-Begin
-
-  {$IFDEF PANDORA}
-  BATTLEVEL := StrToInt(ReadLinuxFile('/sys/class/power_supply/bq27500-0/capacity'));
-  {$ELSE}
-    {$IFNDEF FPC}
-      // Windows
-      GetSystemPowerStatus(SysPowerStatus);
-      Case SysPowerStatus.ACLineStatus of
-        1: BATTLEVEL := 100;
-        0: BATTLEVEL := SysPowerStatus.BatteryLifePercent;
-      end;
-    {$ELSE}
-      // put Darwin here
-    {$ENDIF}
-  {$ENDIF}
-
-  // Draws the battery status in the current window. Assumes the current window is a "system" window, and has a stripe.
-  // First, find the stripe so we know what to do!
-
-  If DWWindowID > -1 Then Begin
-
-    Window := SCREENBANK;
-    Font := SP_SetFPEditorFont;
-
-    SP_GetWindowDetails(DWWindowID, Win, Err);
-    SP_SetDrawingWindow(DWWindowID);
-
-    T_INK := 0;
-    T_OVER := 0;
-
-    X := Win^.Width - FPFh - 3 + FPFw;
-    Y := 0;
-
-    // Now calculate how much we need to remove for the battery meter.
-    // There are four stripes.
-
-    BattW := Round((((FPFw * 4))) * ((100-BATTLEVEL)/100)) -3;
-    SP_DrawStripe(@SP_BankList[SP_FindBankID(SCREENBANK)]^.Memory[0], Win^.Width, FPFw, FPFh, FocusedWindow = fwDirect);
-
-    For Idx := 2 To FPFh -1 Do Begin
-      PixPtr := @SP_BankList[SP_FindBankID(SCREENBANK)]^.Memory[X + (Idx * Win^.Width) - Idx Div 2];
-      PixW := BattW;
-      While PixW > 0 Do Begin
-        PixPtr^ := 0;
-        Dec(PixW);
-        Dec(PixPtr);
-        Inc(y);
-      End;
-    End;
-
-    SP_SetDirtyRect(Win^.Left, Win^.Top, Win^.Left + Win^.Width, Win^.Top + Win^.Height);
-    SP_SetDrawingWindow(Window);
-    SP_SetSystemFont(Font, Err);
-
   End;
 
 End;
@@ -1071,21 +1028,17 @@ Begin
   SP_GetWindowDetails(FPWindowID, Win, Error);
   Win^.CaptionHeight := FPCaptionHeight;
   SP_CreateEditorMenu;
+  // SP_CreateEditorTabBar;
   fwEditor := FPWIndowID;
 
   // Dimensions. Client area is the inner part of the window excluding border ( 1 pixel ) and caption.
   // Page area is the area that the text is rendered to.
 
   FPCaptionHeight := FPFh + 2;
-  FPClientWidth := FPWindowWidth - 2;
-  FPClientHeight := FPWindowHeight - FPCaptionHeight - 1;
-  FPClientLeft := 1;
-  FPClientTop := FPCaptionHeight;
-
-  If Assigned(FPMenu) Then Begin
-    Dec(FPClientHeight, FPMenu.Height);
-    Inc(FPClientTop, FPMenu.Height);
-  End;
+  FPClientHeight := Win^.Component.fClientRect.Height;
+  FPClientWidth := Win^.Component.fClientRect.Width;
+  FPClientLeft := Win^.Component.fClientRect.Left;
+  FPClientTop := Win^.Component.fClientRect.Top;
 
   FPPaperLeft := BSize + FPClientLeft;
   FPPaperTop := BSize + FPClientTop;
@@ -1222,31 +1175,38 @@ End;
 
 Procedure SP_ForceCompile;
 Var
-  Idx, cIdx: Integer;
-  s: aString;
+  s, s2: aString;
+  Idx, i: Integer;
+  InString: Boolean;
   Error: TSP_ErrorCode;
 Begin
 
   Idx := 0;
   SP_Program_Clear;
 
-  While Idx < Listing.Count Do Begin
-    cIdx := Idx;
-    s := Listing[Idx];
-    Inc(Idx);
-    While (Idx < Listing.Count) And (SP_LineHasNumber(Idx) = 0) Do Begin
-      s := s + Listing[Idx];
+  if Assigned(Listing) then
+    While Idx < Listing.Count Do Begin
+      s := Listing[Idx];
       Inc(Idx);
-    End;
-    s := SP_TokeniseLine(s, False, True) + SP_TERMINAL_SEQUENCE;
-    If s <> SP_TERMINAL_SEQUENCE Then Begin
-      SP_Convert_ToPostFix(s, Error.Position, Error);
-      If Error.Code = SP_ERR_OK Then Begin
-        SP_Store_Line(s);
-        CompiledListing[cIdx] := s;
+      InString := False;
+      if s <> '' Then For i := 1 to Length(s) Do If s[i] = '"' Then InString := Not InString;
+      While (Idx < Listing.Count) And (SP_LineHasNumber(Idx) = 0) Do Begin
+        s2 := Listing[Idx];
+        If (s2 <> '') And Not InString And (((s2[1] in ['A'..'Z', 'a'..'z']) And (Listing.Flags[Idx -1].ReturnType = spHardReturn) And (s[Length(s)] in ['0'..'9'])) or (Listing.Flags[Idx -1].ReturnType = spHardReturn)) Then
+          s := s + ' ' + s2
+        Else
+          s := s + s2;
+        if s2 <> '' then For i := 1 to Length(s2) Do If s2[i] = '"' Then InString := Not InString;
+        Inc(Idx);
+      End;
+      s := SP_TokeniseLine(s, False, True) + SP_TERMINAL_SEQUENCE;
+      If s <> SP_TERMINAL_SEQUENCE Then Begin
+        SP_Convert_ToPostFix(s, Error.Position, Error);
+        If Error.Code = SP_ERR_OK Then Begin
+          SP_Store_Line(s);
+        End;
       End;
     End;
-  End;
 
 End;
 
@@ -1290,42 +1250,6 @@ Begin
 
 End;
 
-Procedure SP_CompiledListingAdd(const s: aString);
-Begin
-
-  CompilerLock.Enter;
-  CompiledListing.Add(s);
-  CompilerLock.Leave;
-
-End;
-
-Procedure SP_CompiledListingDelete(Idx: Integer);
-Begin
-
-  CompilerLock.Enter;
-  CompiledListing.Delete(Idx);
-  CompilerLock.Leave;
-
-End;
-
-Procedure SP_CompiledListingInsert(Idx: Integer; const s: aString);
-Begin
-
-  CompilerLock.Enter;
-  CompiledListing.Insert(Idx, s);
-  CompilerLock.Leave;
-
-End;
-
-Procedure SP_CompiledListingClear;
-Begin
-
-  CompilerLock.Enter;
-  CompiledListing.Clear;
-  CompilerLock.Leave;
-
-End;
-
 Function SP_GetLineExtents(Idx: Integer; FindStart: Boolean = False): TPoint;
 Var
   nIdx: Integer;
@@ -1359,18 +1283,6 @@ Begin
     End;
   End;
   Result.Y := Idx -1;
-
-End;
-
-Procedure SP_CompiledListingChange(Idx: Integer; const s: aString);
-Begin
-
-  // Should only ever be called by the compiler.
-
-  CompilerLock.Enter;
-  CompiledListing[Idx] := s;
-  Listing.Flags[Idx].State := spLineOk;
-  CompilerLock.Leave;
 
 End;
 
@@ -2578,7 +2490,7 @@ Begin
 
     // Draw the Gutter
 
-    SP_FillRect(FPClientLeft, FPClientTop, FPPaperLeft + (FPFw * FPGutterWidth), FPClientHeight, gutterClr);
+    SP_FillRect(FPClientLeft, FPClientTop, FPPaperLeft + (FPFw * FPGutterWidth), FPClientHeight +1, gutterClr);
 
   End;
 
@@ -3338,7 +3250,7 @@ Begin
       Else
         If FocusedWindow = fwDirect Then
           SP_DisplayDWCursor;
-      SP_DrawBatteryStatus;
+      SP_UpdateBatteryStatus;
       LocalFlashState := FLASHSTATE;
     End;
 
@@ -3388,6 +3300,7 @@ Begin
       End;
       CURSORPOS := Max(1, EDITERRORPOS);
       DWSelP := CURSORPOS;
+      SP_EditorDisplayEditLine;
     End;
 
     SP_FPWaitForUserEvent(KeyInfo, LocalFlashState);
@@ -3475,7 +3388,7 @@ Begin
     Idx := 1;
     While (Idx < Length(s)) And (s[Idx] in ['0'..'9']) And Not SP_WasPrevSoft(Result.Y) Do
       Inc(Idx);
-    If X < FPGutterWidth * FPFw Then Begin
+    If X < (FPGutterWidth +1) * FPFw Then Begin
       If Idx = 1 Then
         Result.X := 1
       Else
@@ -5582,8 +5495,6 @@ Begin
               s := Listing.PerformRedo;
             While SyntaxListing.Count < Listing.Count Do
               SyntaxListing.Add('');
-            While CompiledListing.Count < Listing.Count Do
-              CompiledListing.Add('');
             While s <> '' Do Begin
               Idx := pLongWord(@s[1])^;
               SP_MarkAsDirty(Idx);
@@ -7540,7 +7451,7 @@ Begin
         Dec(x, 8);
       End;
       T_SCALEY := 1;
-      SP_TextOut(FONTBANKID, 16, WinH - 22, #127' 2021 ZX Development Ltd.'{#13'        ZXDunny    Windows/Pandora/OSX'#13'        Piez       Linux'#13'        Chris      Pi'}, 232, 0, True);
+      SP_TextOut(FONTBANKID, 16, WinH - 22, #127' 2023 ZX Development Ltd.'{#13'        ZXDunny    Windows/Pandora/OSX'#13'        Piez       Linux'#13'        Chris      Pi'}, 232, 0, True);
       SP_InvalidateWholeDisplay;
       SP_NeedDisplayUpdate := True;
       SP_WaitForSync;
@@ -7823,7 +7734,6 @@ Var
   Str1, ValTokens: aString;
 Begin
 
-
   // Executes a line of BASIC as an expression. Calling functions can deal with the result and any errors.
 
   Position := 1;
@@ -7833,6 +7743,10 @@ Begin
     If Expr[1] <> #$F Then Begin
       Str1 := SP_TokeniseLine(Expr, True, False) + #255;
       ValTokens := SP_Convert_Expr(Str1, Position, Error, -1) + #255;
+      If (Position <> Length(Str1)) or ((Position < Length(Str1)) And (Str1[Position] <> #255)) Then Begin
+        Error.Code := SP_ERR_SYNTAX_ERROR;
+        Exit;
+      End;
       SP_RemoveBlocks(ValTokens);
       SP_TestConsts(ValTokens, 1, Error, False);
       SP_AddHandlers(ValTokens);
@@ -8162,28 +8076,6 @@ Begin
   End;
 End;
 
-Procedure SP_CompileProgram;
-Var
-  CurLine, Idx: Integer;
-  s: aString;
-Begin
-
-  // Gathers up all the compiled code and builds a program from it
-
-  If Assigned(CompiledListing) Then Begin
-    SP_Program_Clear;
-    For Idx := 0 To CompiledListing.Count -1 Do Begin
-      s := CompiledListing[Idx];
-      If s <> '' Then Begin
-        CurLine := pLongWord(@s[2])^;
-        If SP_FindLineInListing(CurLine) > -1 Then
-          SP_Store_Line(s);
-      End;
-    End;
-  End;
-
-End;
-
 Procedure SP_DWStoreLine(Line: aString);
 Var
   s: aString;
@@ -8335,10 +8227,9 @@ Begin
     While (Listing.Count > 0) And (LineNum = 0) Do Begin
       LineNum := SP_LineHasNumber(0);
       If LineNum <= 0 Then Begin
-        S := LongWordToString(Listing.Flags[0].ReturnType) +
-             LongWordToString(Length(Listing[0])) + Listing[0] +
-             LongWordToString(Length(SyntaxListing[0])) + SyntaxListing[0] +
-             LongWordToString(Length(CompiledListing[0])) + CompiledListing[0];
+        S := aChar(1) + LongWordToString(Listing.Flags[0].ReturnType) +
+                        LongWordToString(Length(Listing[0])) + Listing[0] +
+                        LongWordToString(Length(SyntaxListing[0])) + SyntaxListing[0];
         NewList.Add(s);
         SP_DeleteLine(0);
       End Else
@@ -8353,8 +8244,8 @@ Begin
 
       Idx := 0;
       While Idx < NewList.Count Do Begin
-        If (NewList[Idx][1 + (SizeOf(LongWord) * 2)] in ['0'..'9']) or (Idx = 0) Then Begin
-          nl := SP_GetLineNumberFromText(Copy(NewList[Idx], 9));
+        If (NewList[Idx][1] = #1) and (NewList[Idx][2 + (SizeOf(LongWord) * 2)] in ['0'..'9']) or (Idx = 0) Then Begin
+          nl := SP_GetLineNumberFromText(Copy(NewList[Idx], 10));
           If nl >= LineNum Then Break;
         End;
         Inc(Idx);
@@ -8366,8 +8257,11 @@ Begin
         S := LongWordToString(Listing.Flags[nIdx].ReturnType) +
              LongWordToString(Length(Listing[nIdx])) + Listing[nIdx] +
              LongWordToString(Length(SyntaxListing[nIdx])) + SyntaxListing[nIdx] +
-             LongWordToString(Length(CompiledListing[nIdx])) + CompiledListing[nIdx] +
              LongWordToString(Listing.Flags[nIdx].Indent);
+        if nIdx = Extents.X then
+          s := aChar(1) + s
+        else
+          s := aChar(0) + s;
         If Idx = NewList.Count Then
           NewList.Add(s)
         Else
@@ -8383,7 +8277,7 @@ Begin
 
   For Idx := 0 To NewList.Count -1 Do Begin
 
-    s := NewList[Idx];
+    s := Copy(NewList[Idx], 2);
     rt := pLongWord(@s[1])^;
     s := Copy(s, 5);
 
@@ -8394,10 +8288,6 @@ Begin
 
     nl := pLongWord(@s[1])^;
     SyntaxListing.Add(Copy(s, 5, nl));
-    s := copy(s, nl + 5);
-
-    nl := pLongWord(@s[1])^;
-    SP_CompiledListingAdd(Copy(s, 5, nl));
     s := copy(s, nl + 5);
 
     Listing.Flags[Idx].Indent := pLongWord(@s[1])^;
@@ -9832,7 +9722,7 @@ Begin
     End else
       Result.Hint := Result.Hint + ' ' + #16#2#0#0#0 + 'Not found';
   End Else
-    If SP_IsReserved(Upper(Result.Hint)) Then Begin
+    If (Error.Code = SP_ERR_SYNTAX_ERROR) or SP_IsReserved(Upper(Result.Hint)) Then Begin
       Result.Hint := '';
       Exit;
     End Else

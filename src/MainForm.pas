@@ -32,7 +32,7 @@ uses
   SHFolder, SysUtils, Variants, Classes, Graphics, Controls, Forms, Math,
   Dialogs, SP_SysVars, SP_Graphics, SP_Graphics32, SP_BankManager, SP_Util, SP_Main, SP_FileIO,
   ExtCtrls, SP_Input, MMSystem, SP_Errors, SP_Sound, Bass, SP_Tokenise, SP_Menu, RunTimeCompiler,
-  {$IFDEF OPENGL}dglOpenGL{$ENDIF}, SP_Components, SP_BaseComponentUnit, Clipbrd;
+  {$IFDEF OPENGL}dglOpenGL,{$ENDIF} SP_Components, SP_BaseComponentUnit, Clipbrd;
 
 Const
 
@@ -57,6 +57,7 @@ type
     procedure FormKeyPress(Sender: TObject; var Key: Char);
     procedure FormActivate(Sender: TObject);
     procedure FormDeactivate(Sender: TObject);
+    procedure FormCanResize(Sender: TObject; var NewWidth, NewHeight: Integer; var Resize: Boolean);
   private
     { Private declarations }
     Minimised: Boolean;
@@ -112,7 +113,6 @@ var
   Quitting: Boolean = False;
   InitTime: LongWord;
   ImgResource: Array of Byte;
-  ThreadAlive: Boolean = False;
   lastt, ft: Longword;
   TimerFreq, BaseTime: Int64;
   Bits: Pointer;
@@ -120,7 +120,7 @@ var
   LastMouseX, LastMouseY: Integer;
   {$IFDEF OPENGL}
     LastScaledMouseX, LastScaledMouseY: Integer;
-    GLInitDone: Boolean;
+    GLInitDone, ReScaleFlag: Boolean;
     PixArray, DispArray: Array of Byte;
     RC: HGLRC;
     DC: hDc;
@@ -130,6 +130,7 @@ var
   ScaleMouseX, ScaleMouseY: aFloat;
   MouseInForm, IgnoreNextMenuChar, AltDown, FormActivated: Boolean;
   AltChars: aString;
+  MainCanResize: Boolean = True;
 
 {$IFDEF OPENGL}
 Const
@@ -152,6 +153,8 @@ Procedure TMain.OnResizeMain(Var Msg: TMessage);
 Var
   l, t, w, h, cw, ch: Integer;
 Begin
+
+  MainCanResize := False;
 
   cw := ClientWidth;
   ch := ClientHeight;
@@ -177,6 +180,8 @@ Begin
   Msg.Result := 0;
   SIZINGMAIN := False;
 
+  MainCanResize := True;
+
 End;
 
 Procedure TRefreshThread.Execute;
@@ -185,18 +190,12 @@ Var
   p: TPoint;
 Begin
 
-  RenderCount := 0;
+  FreeOnTerminate := True;
   NameThreadForDebugging('Refresh Thread');
+  Priority := tpNormal;
+  RefreshThreadAlive := True;
 
   While Not SP_Interpreter_Ready Do CB_YIELD;
-
-  if CORECOUNT >= 4 then
-    Priority := tpTimeCritical
-  else
-    if CORECOUNT > 1 then
-      Priority := tpHigher
-    else
-      Priority := tpIdle;
 
   StartTime := Round(CB_GETTICKS);
   LastFrames := 0;
@@ -211,6 +210,32 @@ Begin
       LastFrames := FRAMES;
 
       DisplaySection.Enter;
+
+      GetCursorPos(p);
+      p := Main.ScreenToClient(p);
+      {$IFDEF OpenGL}
+        MOUSEX := Integer(Round(p.X / ScaleMouseX));
+        MOUSEY := Integer(Round(p.Y / ScaleMouseY));
+      {$ELSE}
+        MOUSEX := p.X;
+        MOUSEY := p.Y;
+      {$ENDIF}
+      If Not PtInRect(Main.ClientRect, p) Then Begin
+        If MouseInForm Then Begin
+          MOUSEVISIBLE := False;
+          SP_InvalidateWholeDisplay;
+          SP_NeedDisplayUpdate := True;
+          MouseInForm := False;
+        End;
+      End Else Begin
+        If Not MouseInForm Then Begin
+          MOUSEVISIBLE := USERMOUSEVISIBLE or (SYSTEMSTATE in [SS_EDITOR, SS_DIRECT, SS_ERROR]);
+          MouseInForm := True;
+          SP_InvalidateWholeDisplay;
+          SP_NeedDisplayUpdate := True;
+        End;
+      End;
+
       If SP_FrameUpdate Then Begin
         If UpdateDisplay Then Begin
           CB_Refresh_Display;
@@ -219,40 +244,23 @@ Begin
         UPDATENOW := False;
         CauseUpdate := False;
       End;
+
       DisplaySection.Leave;
 
     End Else
 
-      TThread.Sleep(1);
-
-    GetCursorPos(p);
-    p := Main.ScreenToClient(p);
-    {$IFDEF OpenGL}
-      MOUSEX := Integer(Round(p.X / ScaleMouseX));
-      MOUSEY := Integer(Round(p.Y / ScaleMouseY));
-    {$ELSE}
-      MOUSEX := p.X;
-      MOUSEY := p.Y;
-    {$ENDIF}
-    If Not PtInRect(Main.ClientRect, p) Then Begin
-      If MouseInForm Then Begin
-        MOUSEVISIBLE := False;
-        SP_InvalidateWholeDisplay;
-        SP_NeedDisplayUpdate := True;
-        MouseInForm := False;
-      End;
-    End Else Begin
-      If Not MouseInForm Then Begin
-        MOUSEVISIBLE := USERMOUSEVISIBLE or (SYSTEMSTATE in [SS_EDITOR, SS_DIRECT, SS_ERROR]);
-        MouseInForm := True;
-        SP_InvalidateWholeDisplay;
-        SP_NeedDisplayUpdate := True;
-      End;
-    End;
+      Sleep(1);
 
   End;
 
-  Terminate;
+  {$IFDEF OpenGL}
+  wglMakeCurrent(0, 0);
+  wglDeleteContext(RC);
+  ReleaseDC(Main.Handle, DC);
+  DeleteDC (DC);
+  {$ENDIF}
+
+  RefreshThreadAlive := False;
 
 End;
 
@@ -347,6 +355,11 @@ Begin
 
     If Not GLInitDone Then Begin
       InitGL;
+      ReScaleFlag := True;
+    End;
+
+    If ReScaleFlag Then Begin
+      ReScaleFlag := False;
       SetScaling(DISPLAYWIDTH, DISPLAYHEIGHT, Main.ClientWidth, Main.ClientHeight);
       Main.FormResize(Main);
     End;
@@ -403,8 +416,6 @@ Begin
     Main.Repaint;
   {$ENDIF}
 
-  Inc(RenderCount);
-
 End;
 
 Function GetTicks: aFloat;
@@ -448,11 +459,16 @@ End;
 
 Function SetScreen(Width, Height, sWidth, sHeight: Integer; FullScreen: Boolean): Integer;
 Var
+  oW, oH: Integer;
+  oFS: Boolean;
   l, t, w, h: NativeInt;
   r: TRect;
 Begin
 
   Result := 0;
+  oW := SCALEWIDTH;
+  oH := SCALEHEIGHT;
+  oFS := SPFULLSCREEN;
 
   // Check for transition from window to fullscreen and vice-versa
 
@@ -476,10 +492,14 @@ Begin
   DISPLAYWIDTH := Width;
   DISPLAYHEIGHT := Height;
 
-  {$IFDEF OPENGL}
-  GLInitDone := False; // trigger the OpenGL system to recreate itself with the new window/screen size
-  {$ENDIF}
-  SetScreenResolution(sWidth, sHeight, FullScreen);
+  if (sWidth <> oW) or (sHeight <> oH) or (oFS <> FullScreen) Then Begin
+    {$IFDEF OPENGL}
+    GLInitDone := False; // trigger the OpenGL system to recreate itself with the new window/screen size
+    {$ENDIF}
+    SetScreenResolution(sWidth, sHeight, FullScreen);
+  End Else
+    {$IFDEF OpenGL}ReScaleFlag := True{$ENDIF};
+
   w := sWidth;
   h := sHeight;
 
@@ -522,16 +542,6 @@ begin
     if Not Result then
       SP_PRINT(-1,0,0,-1,IntToString(hMod)+','+inttostring(width)+'x'+inttostring(height),0,8,error);
 
-{
-DISP_CHANGE_SUCCESSFUL
-DISP_CHANGE_BADDUALVIEW
-DISP_CHANGE_BADFLAGS
-DISP_CHANGE_BADMODE
-DISP_CHANGE_BADPARAM
-DISP_CHANGE_FAILED
-DISP_CHANGE_NOTUPDATED
-DISP_CHANGE_RESTART
-}
   End Else Begin
 
     hMod := Main.Height - Main.ClientHeight;
@@ -543,9 +553,24 @@ end;
 
 function SetScreenResolution(Width, Height: Integer; FullScreen: Boolean): Boolean;
 var
-  DeviceMode: TDeviceMode;
+  oldDeviceMode, DeviceMode: TDeviceMode;
+  oW, oH: Integer;
+  oFS: Boolean;
   R: TRect;
+const
+  ENUM_CURRENT_SETTINGS = DWORD(-1);
 begin
+
+  If SPFULLSCREEN Then Begin
+    EnumDisplaySettings(nil, ENUM_CURRENT_SETTINGS, OldDeviceMode);
+    oW := OldDeviceMode.dmPelsWidth;
+    oH := OldDeviceMode.dmPelsHeight;
+    oFS := True;
+  End Else Begin
+    oW := WINWIDTH;
+    oH := WINHEIGHT;
+    oFS := False;
+  End;
 
   If FullScreen Then Begin
     with DeviceMode do begin
@@ -554,8 +579,11 @@ begin
       dmPelsHeight := Height;
       dmFields := DM_PELSWIDTH or DM_PELSHEIGHT;
     end;
-    Result := ChangeDisplaySettings(DeviceMode, 0) = DISP_CHANGE_SUCCESSFUL;
-    Main.BorderStyle := bsNone;
+    If (oFS <> FullScreen) or (Width <> oW) or (Height <> oH) Then Begin
+      Result := ChangeDisplaySettings(DeviceMode, 0) = DISP_CHANGE_SUCCESSFUL;
+      Main.BorderStyle := bsNone;
+    End Else
+      Result := True;
     SPFULLSCREEN := True;
   End Else Begin
     If SPFULLSCREEN Then Begin
@@ -567,9 +595,11 @@ begin
         dmPelsHeight := REALSCREENHEIGHT;
         dmFields := DM_PELSWIDTH or DM_PELSHEIGHT;
       End;
-      ChangeDisplaySettings(DeviceMode, 0);
+      If (oFS <> FullScreen) or (Width <> oW) or (Height <> oH) Then Begin
+        ChangeDisplaySettings(DeviceMode, 0);
+        Main.BorderStyle := bsSingle;
+      End;
       SPFULLSCREEN := False;
-      Main.BorderStyle := bsSingle;
     End;
     Result := True;
   End;
@@ -601,11 +631,10 @@ Begin
 
   NameThreadForDebugging('Interpreter Thread');
 
-  ThreadAlive := True;
-  Priority := tpHigher;
+  InterpreterThreadAlive := True;
+  Priority := tpNormal;
   SP_MainLoop;
-  ThreadAlive := False;
-  Terminate;
+  InterpreterThreadAlive := False;
 
 End;
 
@@ -680,7 +709,7 @@ begin
     End Else Begin
       Win := WindowAtPoint(X, Y, ID);
       If Assigned(Win) Then Begin
-        If Not (SYSTEMSTATE in [SS_EDITOR, SS_DIRECT]) and (MODALWINDOW = -1) Then
+        If Not (SYSTEMSTATE in [SS_EDITOR, SS_DIRECT, SS_EVALUATE]) and (MODALWINDOW = -1) Then
           SwitchFocusedWindow(ID); // The editor handles this.
         Win := ControlAtPoint(Win, X, Y);
         If Assigned(Win) Then Begin
@@ -881,17 +910,45 @@ begin
   FormActivated := True;
 end;
 
+procedure TMain.FormCanResize(Sender: TObject; var NewWidth, NewHeight: Integer; var Resize: Boolean);
+var
+  nw, nh{, sw, sh}: Integer;
+  {Error: TSP_ErrorCode;}
+begin
+
+  Exit; // Not yet
+
+  if WindowState = wsMinimized Then Begin
+    Resize := False;
+  End Else
+    If MainCanResize Then Begin
+      DisplaySection.Enter;
+      NewHeight := Round(NewWidth * (Height / Width));
+      nw := NewWidth - (Width - ClientWidth);
+      nh := NewHeight - (Height - ClientHeight);
+  {    sw := Ceil(nw * (DISPLAYWIDTH/SCALEWIDTH));
+      sh := Ceil(nh * (DISPLAYHEIGHT/SCALEHEIGHT));
+      SetScreen(sw, sh, nw, nh, SPFULLSCREEN);
+      SP_ResizeWindow(0, sw, sh, -1, SPFULLSCREEN, Error);}
+      SetScreen(DISPLAYWIDTH, DISPLAYHEIGHT, nw, nh, SPFULLSCREEN);
+      SP_InvalidateWholeDisplay;
+      SP_NeedDisplayUpdate := True;
+      DisplaySection.Leave;
+    End;
+
+end;
+
 Procedure TMain.FormCloseQuery(Sender: TObject; var CanClose: Boolean);
 begin
 
   PLAYSignalHalt(-1);
-  If Not QUITMSG Then
+  If Not QUITMSG Then Begin
     Quitting := True;
+    QUITMSG := True;
+  End;
 
-  QUITMSG := True;
-  Repeat
-    Sleep(1);
-  Until Not Drawing;
+  While InterpreterThreadAlive And RefreshThreadAlive Do
+    CB_YIELD;
 
 end;
 
@@ -997,7 +1054,6 @@ begin
     {$IFDEF DEBUG}
       BUILDSTR := BUILDSTR + ']';
     {$ENDIF}
-
 
     // Set the HOME folder - if we're loading a parameter file, extract the
     // directory and set that as HOMEFOLDER
@@ -1373,9 +1429,8 @@ begin
   If RC <> 0 Then Begin
     wglDeleteContext(RC);
     ReleaseDC(Main.Handle, DC);
-  End;
-
-  InitOpenGL;
+  End Else
+    InitOpenGL;
 
   with pfd do begin
     nSize:= SizeOf( PIXELFORMATDESCRIPTOR );
@@ -1449,7 +1504,7 @@ begin
       SetLength(DispArray, ScaledWidth * 4 * ScaledHeight);
       DISPLAYPOINTER := @PixArray[0];
 
-      If GLInitDone Then Begin
+      If GLInitDone and Not ReScaleFlag Then Begin
 
         glClearColor(0, 0, 0, 0);
         glClearDepth(1);
@@ -1473,7 +1528,7 @@ begin
 
         End Else Begin
 
-          glTexParameterI(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+          glTexParameterI(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
           glTexParameterI(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 
         End;

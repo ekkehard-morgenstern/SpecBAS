@@ -25,8 +25,8 @@ Unit SP_Interpret_PostFix;
 
 interface
 
-Uses Forms, {$IFNDEF FPC}IOUtils,{$ELSE}FileUtil,{$ENDIF} SP_Util, SP_Graphics, SP_Graphics32, SP_SysVars, SP_Errors, SP_Components, SP_Tokenise, SP_InfixToPostFix, SP_FileIO,
-     SP_Input, SP_BankManager, SP_BankFiling, SP_Streams, SP_Sound, SP_Package, Math, Classes, SysUtils, SP_Math,
+Uses System.SyncObjs, Forms, {$IFNDEF FPC}IOUtils,{$ELSE}FileUtil,{$ENDIF} SP_Util, SP_Graphics, SP_Graphics32, SP_SysVars, SP_Errors, SP_Components, SP_Tokenise, SP_InfixToPostFix, SP_FileIO,
+     SP_Input, SP_BankManager, SP_BankFiling, SP_Streams, SP_Sound, SP_Package, Math, Classes, SysUtils, SP_Math, Clipbrd,
      {$IFDEF FPC}LclIntf{$ELSE}Windows{$ENDIF}, SP_Strings, SP_Menu, SP_UITools, SP_AnsiStringlist, SP_Variables;
 
 Type
@@ -138,6 +138,7 @@ Procedure SP_Interpret_COMPILE(Var Info: pSP_iInfo);
 Procedure SP_Interpret_UNHANDLED(Var Info: pSP_iInfo);
 Procedure SP_Interpret_FN_STK(Var Info: pSP_iInfo);
 Procedure SP_Interpret_FN_STKS(Var Info: pSP_iInfo);
+Procedure SP_Interpret_FN_CLIPS(Var Info: pSP_iInfo);
 Procedure SP_Interpret_FN_SCREENS(Var Info: pSP_iInfo);
 Procedure SP_Interpret_FN_JOINS(Var Info: pSP_iInfo);
 Procedure SP_Interpret_FN_TEXTURES(Var Info: pSP_iInfo);
@@ -338,6 +339,7 @@ Procedure SP_Interpret_FN_MENUBOX_EX(Var Info: pSP_iInfo);
 Procedure SP_Interpret_FN_FEXISTS(Var Info: pSP_iInfo);
 Procedure SP_Interpret_FN_FPATH(Var Info: pSP_iInfo);
 Procedure SP_Interpret_FN_FNAME(Var Info: pSP_iInfo);
+Procedure SP_Interpret_FN_REVS(Var Info: pSP_iInfo);
 Procedure SP_Interpret_FN_DEXISTS(Var Info: pSP_iInfo);
 Procedure SP_Interpret_FN_PYTH(Var Info: pSP_iInfo);
 Procedure SP_Interpret_FN_LOGW(Var Info: pSP_iInfo);
@@ -423,6 +425,8 @@ Procedure SP_Interpret_OVER(Var Info: pSP_iInfo);
 Procedure SP_Interpret_TRANSPARENT(Var Info: pSP_iInfo);
 Procedure SP_Interpret_SCALE(Var Info: pSP_iInfo);
 Procedure SP_Interpret_LET(Var Info: pSP_iInfo);
+Procedure SP_Interpret_ENUM(Var Info: pSP_iInfo);
+Procedure SP_Interpret_ENUM_BASE(Var Info: pSP_iInfo);
 Procedure SP_Interpret_CLS(Var Info: pSP_iInfo);
 Procedure SP_Interpret_DIM(Var Info: pSP_iInfo);
 Procedure SP_Interpret_AUTODIM(Var Info: pSP_iInfo);
@@ -464,7 +468,6 @@ Procedure SP_Interpret_INC(Var Info: pSP_iInfo);
 Procedure SP_Interpret_INCRANGE(Var Info: pSP_iInfo);
 Procedure SP_Interpret_DEC(Var Info: pSP_iInfo);
 Procedure SP_Interpret_DECRANGE(Var Info: pSP_iInfo);
-Procedure SP_Interpret_SWAP(Var Info: pSP_iInfo);
 Procedure SP_Interpret_PALETTE(Var Info: pSP_iInfo);
 Procedure SP_Interpret_PALETTE_HSV(Var Info: pSP_iInfo);
 Procedure SP_Interpret_PALETTESHIFT(Var Info: pSP_iInfo);
@@ -758,6 +761,7 @@ Procedure SP_Interpret_OUT_VAR(Var Info: pSP_iInfo);
 Procedure SP_Interpret_OUT_SCREEN(Var Info: pSP_iInfo);
 Procedure SP_Interpret_OUT_STREAM(Var Info: pSP_iInfo);
 Procedure SP_Interpret_FOR_EACH_RANGE(Var Info: pSP_iInfo);
+Procedure SP_Interpret_FOR_EACH_STRING(Var Info: pSP_iInfo);
 Procedure SP_Interpret_WIN_MERGE(Var Info: pSP_iInfo);
 Procedure SP_Interpret_WIN_MERGEALL(Var Info: pSP_iInfo);
 Procedure SP_Interpret_CASE(Var Info: pSP_iInfo);
@@ -858,6 +862,7 @@ Procedure SP_Interpret_SP_IJMP(Var iInfo: pSP_iInfo);
 Procedure SP_Interpret_SP_VALUE(Var iInfo: pSP_iInfo);
 Procedure SP_Interpret_SP_NUMVAR_LET(Var iInfo: pSP_iInfo);
 Procedure SP_Interpret_SP_STRVAR_LET(Var iInfo: pSP_iInfo);
+Procedure SP_Interpret_SP_HYBRID_LET(Var iInfo: pSP_iInfo);
 Procedure SP_Interpret_SP_STRUCT_MEMBER_N(Var iInfo: pSP_iInfo);
 Procedure SP_Interpret_SP_STRUCT_MEMBER_ASS(Var iInfo: pSP_iInfo);
 Procedure SP_Interpret_SP_STRUCT_MEMBER_S(Var iInfo: pSP_iInfo);
@@ -984,6 +989,7 @@ Var
   MENUITEM_lineNum, MENUITEM_Statement, MENUITEM_St: Integer;
   OnActive: Word;
   LastRand: aFloat;
+  FN_Recursion_Count: LongWord;
 
 Const
 
@@ -1178,7 +1184,7 @@ var
   Line, NumBanks: Integer;
   Banks: Array of Integer;
   {$IFDEF DEBUG}
-  s: TFileStream;
+  //s: TFileStream;
   {$ENDIF}
 Begin
 
@@ -1220,12 +1226,12 @@ Begin
     payload.SetPayload(payLoadData[1], Length(PayLoadData));
     payLoad.Free;
     {$IFDEF DEBUG}
-    sFilename := Dir + 'payload.bin';
+{    sFilename := Dir + 'payload.bin';
     if FileExists(sFilename) then
       TFile.Delete(sFilename);
     s := TFileStream.Create(sFilename, fmCreate);
     s.Write(payLoadData[1], Length(payLoadData));
-    s.Free;
+    s.Free; }
     {$ENDIF}
   End;
 
@@ -2552,6 +2558,33 @@ Begin
 
 End;
 
+Procedure SP_Interpret_SP_HYBRID_LET(Var iInfo: pSP_iInfo);
+Var
+  Name, ValueStr: aString;
+  ValueNum: aFloat;
+Begin
+
+  With iInfo^ Do Begin
+    Name := StringFromPtrB(pByte(StrPtr + SizeOf(LongWord)), Token^.TokenLen - SizeOf(LongWord));
+    Name[1] := aChar(Ord(Name[1]) - 128);
+    Case SP_StackPtr^.OpTYpe of
+      SP_VALUE:
+        ValueNum := SP_StackPtr^.Val;
+      SP_STRING:
+        ValueStr := SP_StackPtr^.Str;
+    End;
+    If Name = 'CLIP$' Then Begin
+      Try
+        ClipBoard.AsText := String(ValueStr);
+      Except
+        iInfo^.Error^.Code := SP_ERR_CLIPBOARD_ERROR;
+      End;
+    End;
+    Dec(SP_StackPtr);
+  End;
+
+End;
+
 Procedure SP_Interpret_SP_STRUCT_MEMBER_N(Var iInfo: pSP_iInfo);
 Begin
 
@@ -3755,7 +3788,7 @@ Begin
 
   With Info Do Begin
 
-    While True Do Begin
+    While Not QUITMSG Do Begin
 
       Next_Statement:
 
@@ -5288,6 +5321,14 @@ Begin
 
 End;
 
+Procedure SP_Interpret_FN_REVS(Var Info: pSP_iInfo);
+Begin
+
+  UniqueString(SP_StackPtr^.Str);
+  RevString(SP_StackPtr^.Str);
+
+End;
+
 Procedure SP_Interpret_FN_NUBMODE(Var Info: pSP_iInfo);
 {$IFDEF PANDORA}
 Var
@@ -5899,7 +5940,7 @@ End;
 
 Procedure SP_Interpret_FN_CLAMP(Var Info: pSP_iInfo);
 Var
-  Min, Max: aFloat;
+  Min, Max, t: aFloat;
 Begin
 
   Max := SP_StackPtr^.Val;
@@ -5907,6 +5948,10 @@ Begin
 
   Min := SP_StackPtr^.Val;
   Dec(SP_StackPtr);
+
+  If Max < Min Then Begin
+    t := Max; Max := Min; Min := t;
+  End;
 
   If SP_StackPtr^.Val < Min Then
     SP_StackPtr^.Val := Min
@@ -5918,7 +5963,7 @@ End;
 
 Procedure SP_Interpret_FN_INRANGE(Var Info: pSP_iInfo);
 Var
-  Min, Max: aFloat;
+  Min, Max, t: aFloat;
 Begin
 
   Max := SP_StackPtr^.Val;
@@ -5926,6 +5971,10 @@ Begin
 
   Min := SP_StackPtr^.Val;
   Dec(SP_StackPtr);
+
+  If Max < Min Then Begin
+    t := Max; Max := Min; Min := t;
+  End;
 
   If (SP_StackPtr^.Val >= Min) And (SP_StackPtr^.Val <= Max) Then
     SP_StackPtr^.Val := 1
@@ -6804,6 +6853,19 @@ Begin
   End;
 End;
 
+Procedure SP_Interpret_FN_CLIPS(Var Info: pSP_iInfo);
+Begin
+  Inc(SP_StackPtr);
+  With SP_StackPtr^ Do Begin
+    Try
+      Str := aString(ClipBoard.AsText);
+    Except
+      Info^.Error^.Code := SP_ERR_CLIPBOARD_ERROR;
+    End;
+    opType := SP_STRING;
+  End;
+End;
+
 Procedure SP_Interpret_FN_RND(Var Info: pSP_iInfo);
 Begin
   Inc(SP_StackPtr);
@@ -6953,7 +7015,7 @@ Begin
   Dec(SP_StackPtr);
   S := Round(SP_StackPtr^.Val);
   Dec(SP_StackPtr);
-  SP_StackPtr^.Str := Copy(SP_StackPtr^.Str, S, L);
+  SP_StackPtr^.Str := SP_Copy(SP_StackPtr^.Str, S, L);
 End;
 
 Procedure SP_Interpret_FN_MID(Var Info: pSP_iInfo);
@@ -7400,8 +7462,6 @@ Begin
       Val := 0;
   End;
 End;
-
-
 
 Procedure SP_Interpret_FN_FRAC(Var Info: pSP_iInfo);
 Begin
@@ -8854,7 +8914,10 @@ Begin
       IF T_CENTRE Then
         T_CENTRETEXT := T_CENTRETEXT + aChar(16) + LongWordToString(Ink)
       Else Begin
-        T_INK := Ink;
+        If pSP_Window_Info(WINDOWPOINTER)^.bpp <> 32 Then
+          T_INK := Ink And 255
+        Else
+          T_INK := INK;
       End;
 
   End;
@@ -8877,7 +8940,10 @@ Begin
       IF T_CENTRE Then
         T_CENTRETEXT := T_CENTRETEXT + aChar(17) + LongWordToString(Paper)
       Else Begin
-        T_PAPER := Paper;
+        If pSP_Window_Info(WINDOWPOINTER)^.bpp <> 32 Then
+          T_PAPER := Paper And 255
+        Else
+          T_PAPER := Paper;
       End;
 
   End;
@@ -9430,6 +9496,25 @@ Begin
 
 End;
 
+Procedure SP_Interpret_ENUM(Var Info: pSP_iInfo);
+Begin
+
+  With SP_StackPtr^ Do Begin
+    Val := Val + ENUMBASE -1;
+    If Str <> '' Then
+      Str := aChar(Byte(Str[1]) + Round(ENUMBASE) -1);
+  End;
+
+End;
+
+Procedure SP_Interpret_ENUM_BASE(Var Info: pSP_iInfo);
+Begin
+
+  ENUMBASE := SP_StackPtr^.Val;
+  Dec(SP_StackPtr);
+
+End;
+
 Procedure SP_Interpret_CLS(Var Info: pSP_iInfo);
 Var
   Val: LongWord;
@@ -9539,7 +9624,7 @@ Begin
         // Look for default values now for struct members. Assign them to the first in the array,
         // and then copy that one item out to the rest of the string array values.
 
-        If StructName <> '' Then Begin
+        If (Info^.Error.Code = SP_ERR_OK) And (StructName <> '') Then Begin
           Key := '';
           Indices := '';
           For Idx := 1 To NumIndices Do
@@ -9691,7 +9776,7 @@ End;
 
 Procedure SP_Interpret_AUTODIM(Var Info: pSP_iInfo);
 Var
-  Idx, aIdx, ArrIdx, NumIndices, DLen, DIMBase, VarType: Integer;
+  Idx, aIdx, ArrIdx, NumIndices, Count, DLen, DIMBase, VarType: Integer;
   Indices, VarName, Key: aString;
 Begin
 
@@ -9718,21 +9803,21 @@ Begin
 
   Indices := '';
   NumIndices := Round(SP_StackPtr^.Val);
+  Count := 1;
   Dec(SP_StackPtr);
 
   For Idx := 1 To NumIndices Do Begin
     aIdx := Round(SP_StackPtr^.Val);
-    If aIdx > 0 Then
-      Indices := Indices + LongWordToString(Round(SP_StackPtr^.Val))
-    Else Begin
+    If aIdx > 0 Then Begin
+      Indices := Indices + LongWordToString(aIdx);
+      Count := Count * aIdx;
+    End Else Begin
       ERRStr := VarName;
       Info^.Error^.Code := SP_ERR_SUBSCRIPT_WRONG;
       Exit;
     End;
     Dec(SP_StackPtr);
   End;
-
-  If NumIndices = 1 Then NumIndices := aIdx;
 
   Case VarType of
     SP_NUMVAR:
@@ -9745,28 +9830,27 @@ Begin
       End;
   End;
 
-  If ((NativeUInt(SP_StackPtr) - NativeUInt(SP_StackStart)) Div SizeOf(SP_StackItem)) -1 = NumIndices -1 Then Begin
+  If ((NativeUInt(SP_StackPtr) - NativeUInt(SP_StackStart)) Div SizeOf(SP_StackItem)) -1 = Count -1 Then Begin
 
     // A one-dimensional auto-array
 
     Case VarType of
-      SP_NumVar: arrIdx := SP_FindNumArray(VarName) +1;
-      SP_StrVar: arrIdx := SP_FindStrArray(VarName) +1;
+      SP_NumVar: arrIdx := SP_FindNumArray(VarName);
+      SP_StrVar: arrIdx := SP_FindStrArray(VarName);
     Else
       arrIdx := 0;
     End;
 
     Key := '';
-    NumIndices := DIMBase;
+    Count := 0;
     While SP_StackPtr <> SP_StackStart Do Begin
 
-      aIdx := arrIdx;
       If VarType = SP_NUMVAR Then
-        SP_UpdateNumArray(aIdx, VarName, LongWordToString(NumIndices), Key, SP_StackPtr^.Val, Info^.Error^)
+        NumArrays[arrIdx].Values[Count]^.Value := SP_StackPtr^.Val
       Else
-        SP_UpdateStrArray(aIdx, VarName, LongWordToString(NumIndices), Key, SP_StackPtr^.Str, -1, -1, Info^.Error^);
+        StrArrays[arrIdx].Strings[Count]^.Value := SP_StackPtr^.Str;
 
-      Inc(NumIndices);
+      Inc(Count);
       Dec(SP_StackPtr);
 
     End;
@@ -9836,7 +9920,7 @@ RunIt :
   SetLength(SP_GOSUB_Stack, SP_GOSUB_STACKLEN);
   SP_GOSUB_STACKPTR := 0;
   IGNORE_ON_ERROR := False;
-  Info^.Error^.ReturnType := SP_RUN;
+  Info^.Error^.ReturnType := SP_NEW;
   BREAKSIGNAL := False;
   BPSIGNAL := False;
   If STEPMODE > 0 Then Begin
@@ -9846,6 +9930,7 @@ RunIt :
   tStr := '';
   SP_PreParse(True, True, Info^.Error^, tStr);
   SP_GetDebugStatus(dbgVariables or dbgWatches);
+  Info^.Error^.Code := SP_EXIT; // Preparse forces a compile, which will invalidate pointers to compiled code in the info^ record, so cause a bailout in the calling proc.
 
 End;
 
@@ -10067,17 +10152,20 @@ Begin
       If ((Step > 0) And (StartFrom > EndAt)) or ((Step < 0) And (StartFrom < EndAt)) Then Begin
         i := 0;
         While i < SP_NextCount Do Begin
-          If SP_NextEntries[i].Line = LineItem.Line Then Begin
-            If SP_NextEntries[i].Statement > LineItem.St Then
-              Break;
-          End Else
-            If SP_NextEntries[i].Line > LineItem.Line Then
-              Break;
+          If SP_NextEntries[i].VarName = VarName then
+            If SP_NextEntries[i].Line = LineItem.Line Then Begin
+              If (SP_NextEntries[i].Statement > LineItem.St) or (SP_NextEntries[i].Statement = -1) Then
+                Break;
+            End Else
+              If SP_NextEntries[i].Line > LineItem.Line Then
+                Break;
           Inc(i);
         End;
         If i < SP_NextCount Then Begin
           NXTLINE := SP_NextEntries[i].Line;
           NXTSTATEMENT := SP_NextEntries[i].Statement;
+          If NXTStatement = -1 then
+            NXTLINE := -1;
           Error.Statement := LineItem.St;
           Error.ReturnType := SP_JUMP;
         End;
@@ -10107,7 +10195,7 @@ Begin
           VarIdx := SP_FindNumVar(Str);
           If VarIdx = -1 Then Begin
             Error.Code := SP_ERR_MISSING_VAR;
-            Error.Position := tPos;
+            Error.Position := Integer(tPos);
             Exit;
           End Else Begin
             If Not NumVars[VarIdx]^.ProcVar Then
@@ -10118,7 +10206,7 @@ Begin
 
         With NumVars[VarIdx]^.ContentPtr^ Do Begin
 
-          Case VarType Of
+          Case NumVars[VarIdx]^.Content.VarType Of
 
             SP_FOREACH:
               Begin
@@ -10401,7 +10489,26 @@ Begin
 
             End Else
 
-              Error.Code := SP_ERR_NEXT_WITHOUT_FOR;
+              If VarType = SP_FOREACHSTRING Then Begin
+
+                Inc(EachIndex);
+
+                If EachIndex <= Length(EachTokens) Then Begin
+
+                  Value := aChar(EachTokens[EachIndex]);
+
+                  NXTLINE := LoopLine;
+                  NXTSTATEMENT := LoopStatement;
+                  Error.Statement := St;
+                  Error.ReturnType := SP_JUMP;
+
+                End Else
+
+                  Error.ReturnType := SP_STRING;
+
+              End Else
+
+                Error.Code := SP_ERR_NEXT_WITHOUT_FOR;
 
           End;
 
@@ -12094,96 +12201,6 @@ Begin
 
 End;
 
-Procedure SP_Interpret_SWAP(Var Info: pSP_iInfo);
-Var
-  VarIdx1, VarIdx2: Integer;
-  Val1, Val2: aFloat;
-  Str1, Str2: aString;
-Begin
-
-  If SP_StackPtr^.OpType = SP_NUMVAR Then Begin
-    With SP_StackPtr^ Do Begin
-      VarIdx1 := Round(Val);
-      If VarIdx1 = 0 Then Begin
-        VarIdx1 := SP_FindNumVar(Str);
-        If VarIdx1 = -1 Then Begin
-          Info^.Error^.Code := SP_ERR_MISSING_VAR;
-          Info^.Error^.Position := tPos;
-          Exit;
-        End Else Begin
-          If Not NumVars[VarIdx1]^.ProcVar Then
-            Ptr^ := VarIdx1 + 1;
-        End;
-      End Else
-        Dec(VarIdx1);
-      Val1 := NumVars[VarIdx1]^.ContentPtr^.Value;
-    End;
-    Dec(SP_StackPtr);
-    With SP_StackPtr^ Do Begin
-      VarIdx2 := Round(Val);
-      If VarIdx2 = 0 Then Begin
-        VarIdx2 := SP_FindNumVar(Str);
-        If VarIdx2 = -1 Then Begin
-          Info^.Error^.Code := SP_ERR_MISSING_VAR;
-          Info^.Error^.Position := tPos;
-          Exit;
-        End Else Begin
-          If Not NumVars[VarIdx2]^.ProcVar Then
-            Ptr^ := VarIdx2 + 1;
-        End;
-      End Else
-        Dec(VarIdx2);
-      Val2 := NumVars[VarIdx2]^.ContentPtr^.Value;
-    End;
-    Dec(SP_StackPtr);
-
-    NumVars[VarIdx1]^.ContentPtr^.Value := Val2;
-    NumVars[VarIdx2]^.ContentPtr^.Value := Val1;
-
-  End Else Begin
-
-    With SP_StackPtr^ Do Begin
-      VarIdx1 := Round(Val);
-      If VarIdx1 = 0 Then Begin
-        VarIdx1 := SP_FindStrVar(Str);
-        If VarIdx1 = -1 Then Begin
-          Info^.Error^.Code := SP_ERR_MISSING_VAR;
-          Info^.Error^.Position := tPos;
-          Exit;
-        End Else Begin
-          If Not StrVars[VarIdx1].ProcVar Then
-            Ptr^ := VarIdx1 + 1;
-        End;
-      End Else
-        Dec(VarIdx1);
-      Str1 := StrVars[VarIdx1]^.ContentPtr^.Value;
-    End;
-    Dec(SP_StackPtr);
-    With SP_StackPtr^ Do Begin
-      VarIdx2 := Round(Val);
-      If VarIdx2 = 0 Then Begin
-        VarIdx2 := SP_FindStrVar(Str);
-        If VarIdx2 = -1 Then Begin
-          Info^.Error^.Code := SP_ERR_MISSING_VAR;
-          Info^.Error^.Position := tPos;
-          Exit;
-        End Else Begin
-          If Not StrVars[VarIdx2].ProcVar Then
-            Ptr^ := VarIdx2 + 1;
-        End;
-      End Else
-        Dec(VarIdx2);
-      Str2 := StrVars[VarIdx2]^.ContentPtr^.Value;
-    End;
-    Dec(SP_StackPtr);
-
-    StrVars[VarIdx1]^.ContentPtr^.Value := Str2;
-    StrVars[VarIdx2]^.ContentPtr^.Value := Str1;
-
-  End;
-
-End;
-
 Procedure SP_Interpret_PALETTE(Var Info: pSP_iInfo);
 Var
   v: aFloat;
@@ -12984,6 +13001,7 @@ Begin
 
   SP_GetWindowDetails(0, win, Info^.Error^);
 
+  Inc(SP_StackPtr);
   SP_StackPtr^.Val := 1;
   Inc(SP_StackPtr);
   SP_StackPtr^.Val := REALSCREENWIDTH;
@@ -13000,6 +13018,7 @@ End;
 Procedure SP_Interpret_SCR_WIN(Var Info: pSP_iInfo);
 Begin
 
+  Inc(SP_StackPtr);
   SP_StackPtr^.Val := 0;
   Inc(SP_StackPtr);
   SP_StackPtr^.Val := DISPLAYWIDTH;
@@ -13323,7 +13342,35 @@ Procedure SP_Interpret_WIN_FRONT(Var Info: pSP_iInfo);
 Var
   WindowID: Integer;
   WindowIdx: Integer;
-  MinBank: Integer;
+  Idx: Integer;
+  Bank: pSP_Bank;
+Begin
+
+  // Bring a window to the front (make it the last bank in the banklist)
+
+  WindowID := Round(SP_StackPtr^.Val);
+  Dec(SP_StackPtr);
+
+  DisplaySection.Enter;
+
+  WindowIdx := SP_FindBankID(WindowID);
+  If WindowIdx > -1 Then Begin
+    Bank := SP_BankList[WindowIdx];
+    For Idx := WindowIdx to Length(SP_BankList) -2 do
+      SP_BankList[Idx] := SP_BankList[Idx +1];
+    SP_BankList[Length(SP_Banklist) -1] := Bank;
+    SP_NeedDisplayUpdate := True;
+  End Else
+    Info^.Error^.Code := SP_ERR_WINDOW_NOT_FOUND;
+
+  DisplaySection.Leave;
+
+End;
+
+Procedure SP_Interpret_WIN_BACK(Var Info: pSP_iInfo);
+Var
+  WindowID, MinBank: Integer;
+  WindowIdx: Integer;
   Bank: pSP_Bank;
 Begin
 
@@ -13346,32 +13393,6 @@ Begin
     For WindowIdx := WindowIdx DownTo MinBank Do
       SP_BankList[WindowIdx] := SP_BankList[WindowIdx -1];
     SP_BankList[MinBank] := Bank;
-    SP_NeedDisplayUpdate := True;
-
-  End Else
-    Info^.Error^.Code := SP_ERR_WINDOW_NOT_FOUND;
-
-End;
-
-Procedure SP_Interpret_WIN_BACK(Var Info: pSP_iInfo);
-Var
-  WindowID: Integer;
-  WindowIdx: Integer;
-  Bank: pSP_Bank;
-Begin
-
-  WindowID := Round(SP_StackPtr^.Val);
-  Dec(SP_StackPtr);
-
-  WindowIdx := SP_FindBankID(WindowID);
-  If WindowIdx > -1 Then Begin
-
-    Bank := SP_BankList[WindowIdx];
-    If WindowIdx <> Length(SP_BankList) -1 Then Begin
-      For WindowIdx := WindowIdx To Length(SP_BankList) -1 Do
-        SP_BankList[WindowIdx] := SP_BankList[WindowIdx +1];
-      SP_BankList[Length(SP_BankList) -1] := Bank;
-    End;
     SP_NeedDisplayUpdate := True;
 
   End Else
@@ -13879,9 +13900,11 @@ Begin
 
     SP_FPNewProgram;
     SP_Program_Clear;
-    SP_Reset_Temp_Colours;
     CPAPER := 8;
     CINK := 0;
+    CBOLD := 0;
+    CITALIC := 0;
+    SP_Reset_Temp_Colours;
     SP_CLS(CPAPER);
     Error^.Line := -2;
     Error^.Statement := 0;
@@ -13896,7 +13919,7 @@ Begin
     MATHMODE := 0;
     FILECHANGED := False;
     SP_MakeSystemSounds;
-    Error.Code := SP_NEW;
+    Error.Code := SP_EXIT;
 
   End;
 
@@ -14353,6 +14376,196 @@ Begin
 
   SP_TextureFill(SCREENPOINTER, Round(dX), Round(dY), SCREENSTRIDE, SCREENHEIGHT, TextureStr, tW, tH);
   If SCREENVISIBLE Then SP_SetDirtyRect(0, 0, DISPLAYWIDTH, DISPLAYHEIGHT);
+  SP_NeedDisplayUpdate := True;
+
+End;
+
+Procedure SP_Interpret_RECTANGLE_TO(Var Info: pSP_iInfo);
+Var
+  Y1, Y2, X1, X2: aFloat;
+Begin
+
+  Y2 := SP_StackPtr^.Val;
+  Dec(SP_StackPtr);
+  X2 := SP_StackPtr^.Val;
+  Dec(SP_StackPtr);
+  X1 := DRPOSX;
+  Y1 := DRPOSY;
+
+  SP_ConvertToOrigin_d(X1, Y1);
+  SP_ConvertToOrigin_d(X2, Y2);
+  If WINFLIPPED Then Begin
+    Y1 := (SCREENHEIGHT - 1) - Y1;
+    Y2 := (SCREENHEIGHT - 1) - Y2;
+  End;
+
+  SP_DrawRectangle(Round(X1), Round(Y1), Round(X2), Round(Y2));
+
+  SP_NeedDisplayUpdate := True;
+
+End;
+
+Procedure SP_Interpret_RECTFILL_TO(Var Info: pSP_iInfo);
+Var
+  Valid, BankFill: Boolean;
+  TextureStr: aString;
+  tW, tH, BankID: Integer;
+  X1, Y1, X2, Y2: aFloat;
+  gBank: pSP_Bank;
+  Graphic: pSP_Graphic_Info;
+Begin
+
+  tw := 0; th := 0;
+  BankFill := False;
+  If SP_StackPtr^.OpType = SP_VALUE Then Begin
+    TextureStr := '';
+    BankID := SP_FindBankID(Round(SP_StackPtr^.Val));
+    If BankID > -1 Then Begin
+      gBank := SP_BankList[BankID];
+      If gBank^.DataType = SP_GRAPHIC_BANK Then Begin
+        Graphic := @gBank^.Info[0];
+        tW := NativeUInt(Graphic^.Data);
+        tH := NativeUInt(Graphic);
+        BankFill := True;
+      End Else
+        Info^.Error^.Code := SP_ERR_INVALID_BANK;
+    End Else
+      Info^.Error^.Code := SP_ERR_BANK_NOT_FOUND;
+  End Else Begin
+    TextureStr := SP_StackPtr^.Str;
+  End;
+  Dec(SP_StackPtr);
+
+  Y2 := SP_StackPtr^.Val;
+  Dec(SP_StackPtr);
+  X2 := SP_StackPtr^.Val;
+  Dec(SP_StackPtr);
+  X1 := DRPOSX;
+  Y1 := DRPOSY;
+
+  SP_ConvertToOrigin_d(X1, Y1);
+  SP_ConvertToOrigin_d(X2, Y2);
+  If WINFLIPPED Then Begin
+    Y1 := (SCREENHEIGHT - 1) - Y1;
+    Y2 := (SCREENHEIGHT - 1) - Y2;
+  End;
+
+  If Not BankFill Then Begin
+    Valid := False;
+    If TextureStr = '' Then
+      SP_DrawSolidRectangle(Round(X1), Round(Y1), Round(X2), Round(Y2))
+    Else Begin
+      If Length(TextureStr) > 10 Then Begin
+        tW := pLongWord(@TextureStr[1])^;
+        tH := pLongWord(@TextureStr[5])^;
+        If Length(TextureStr) - 10 = tW * tH Then Valid := True;
+      End;
+      If Not Valid Then Begin
+        TextureStr := SP_StringToTexture(TextureStr);
+        If TextureStr = '' Then
+          SP_DefaultFill(TextureStr, T_INK);
+        tW := pLongWord(@TextureStr[1])^;
+        tH := pLongWord(@TextureStr[5])^;
+      End;
+      SP_DrawTexRectangle(Round(X1), Round(Y1), Round(X2), Round(Y2), TextureStr, tW, tH);
+    End;
+  End;
+
+  SP_NeedDisplayUpdate := True;
+
+End;
+
+Procedure SP_Interpret_ARECTANGLE_TO(Var Info: pSP_iInfo);
+Var
+  Y1, Y2, X1, X2: aFloat;
+Begin
+
+  Y2 := SP_StackPtr^.Val;
+  Dec(SP_StackPtr);
+  X2 := SP_StackPtr^.Val;
+  Dec(SP_StackPtr);
+
+  X1 := DRPOSX;
+  Y1 := DRPOSY;
+
+  SP_ConvertToOrigin_d(X1, Y1);
+  SP_ConvertToOrigin_d(X2, Y2);
+  If WINFLIPPED Then Begin
+    Y1 := (SCREENHEIGHT - 1) - Y1;
+    Y2 := (SCREENHEIGHT - 1) - Y2;
+  End;
+
+  SP_DrawRectangle32Alpha(Round(X1), Round(Y1), Round(X2), Round(Y2));
+
+  SP_NeedDisplayUpdate := True;
+
+End;
+
+Procedure SP_Interpret_ARECTFILL_TO(Var Info: pSP_iInfo);
+Var
+  Valid, BankFill: Boolean;
+  TextureStr: aString;
+  tW, tH, BankID: Integer;
+  X1, Y1, X2, Y2: aFloat;
+  gBank: pSP_Bank;
+  Graphic: pSP_Graphic_Info;
+Begin
+
+  tw := 0; th := 0;
+  BankFill := False;
+  If SP_StackPtr^.OpType = SP_VALUE Then Begin
+    TextureStr := '';
+    BankID := SP_FindBankID(Round(SP_StackPtr^.Val));
+    If BankID > -1 Then Begin
+      gBank := SP_BankList[BankID];
+      If gBank^.DataType = SP_GRAPHIC_BANK Then Begin
+        Graphic := @gBank^.Info[0];
+        tW := NativeUInt(Graphic^.Data);
+        tH := NativeUInt(Graphic);
+        BankFill := True;
+      End Else
+        Info^.Error^.Code := SP_ERR_INVALID_BANK;
+    End Else
+      Info^.Error^.Code := SP_ERR_BANK_NOT_FOUND;
+  End Else Begin
+    TextureStr := SP_StackPtr^.Str;
+  End;
+  Dec(SP_StackPtr);
+
+  Y2 := SP_StackPtr^.Val;
+  Dec(SP_StackPtr);
+  X2 := SP_StackPtr^.Val;
+  Dec(SP_StackPtr);
+  X1 := DRPOSX;
+  Y1 := DRPOSY;
+  SP_ConvertToOrigin_d(X1, Y1);
+  SP_ConvertToOrigin_d(X2, Y2);
+  If WINFLIPPED Then Begin
+    Y1 := (SCREENHEIGHT - 1) - Y1;
+    Y2 := (SCREENHEIGHT - 1) - Y2;
+  End;
+
+  If Not BankFill Then Begin
+    Valid := False;
+    If TextureStr = '' Then
+      SP_DrawSolidRectangle32Alpha(Round(X1), Round(Y1), Round(X2), Round(Y2))
+    Else Begin
+      If Length(TextureStr) > 10 Then Begin
+        tW := pLongWord(@TextureStr[1])^;
+        tH := pLongWord(@TextureStr[5])^;
+        If Length(TextureStr) - 10 = tW * tH Then Valid := True;
+      End;
+      If Not Valid Then Begin
+        TextureStr := SP_StringToTexture(TextureStr);
+        If TextureStr = '' Then
+          SP_DefaultFill(TextureStr, T_INK);
+        tW := pLongWord(@TextureStr[1])^;
+        tH := pLongWord(@TextureStr[5])^;
+      End;
+      SP_DrawTexRectangle32Alpha(Trunc(X1), Trunc(Y1), Trunc(X2), Trunc(Y2), TextureStr, tW, tH);
+    End;
+  End;
+
   SP_NeedDisplayUpdate := True;
 
 End;
@@ -14926,7 +15139,7 @@ Begin
     NXTSTATEMENT := -1;
   End;
   SP_DeleteFile('s:oldprog', Info^.Error^);
-  SP_FileRename('s:old_temp', 's:oldprog', Info^.Error^);
+  SP_FileRename(SP_ConvertFilenameToHost('s:old_temp', Info^.Error^), SP_ConvertFilenameToHost('s:oldprog', Info^.Error^), Info^.Error^);
 
 End;
 
@@ -15190,6 +15403,16 @@ Begin
   SP_ForceScreenUpdate;
   While (Length(ActiveKeys) <> 0) And Not (BREAKSIGNAL or QUITMSG) Do SP_WaitForSync;
   While (Length(ActiveKeys) = 0) And Not (BREAKSIGNAL or QUITMSG) Do SP_WaitForSync;
+
+End;
+
+Procedure SP_Interpret_WAIT_KEY_UP(Var Info: pSP_iInfo);
+Begin
+
+  // If a key is down then wait for it to go up
+
+  SP_ForceScreenUpdate;
+  While (Length(ActiveKeys) <> 0) And Not (BREAKSIGNAL or QUITMSG) Do SP_WaitForSync;
 
 End;
 
@@ -15527,6 +15750,9 @@ Begin
       LineItem.St := Error^.Statement + 1;
     End;
     SP_StackLine(LineItem.Line, LineItem.Statement, LineItem.St, SP_KW_GOSUB, Info^.Error^);
+
+    CONTLINE := Error^.Line;
+    CONTSTATEMENT := Error^.Statement +1;
 
     // Store the current COMMAND_TOKENS so that this is a true recursive system
     // Then just execute the string provided.
@@ -16791,7 +17017,12 @@ Begin
 
       ValPosition := 1;
       ValTkn := @SP_FnList[Idx].Expr;
-      SP_InterpretCONTSafe(ValTkn, ValPosition, Info^.Error^);
+      Inc(FN_Recursion_Count);
+      If FN_Recursion_Count >= 1024 Then
+        Info^.Error^.Code := SP_ERR_OUT_OF_MEMORY
+      Else
+        SP_InterpretCONTSafe(ValTkn, ValPosition, Info^.Error^);
+      Dec(FN_Recursion_Count);
 
       // Now remove the variables
 
@@ -20486,6 +20717,43 @@ Begin
 
 End;
 
+Procedure SP_Interpret_FOR_EACH_STRING(Var Info: pSP_iInfo);
+Var
+  VarIdx: Integer;
+  VarName, StrContent: aString;
+  VarPtr: pLongWord;
+  LineItem: TSP_GOSUB_Item;
+  Step: aFloat;
+Begin
+
+  // Stack has variable, then array to use.
+
+  With SP_StackPtr^ Do Begin
+
+    VarIdx := Round(Val);
+    VarName := Str + '$';
+    VarPtr := Ptr;
+    With Info^ Do Begin
+      If Error^.Line >= 0 Then Begin
+        LineItem := SP_ConvertLineStatement(Error^.Line, Error^.Statement + 1);
+      End Else Begin
+        LineItem.Line := -2;
+        LineItem.Statement := SP_FindStatement(@COMMAND_TOKENS, Error^.Statement + 1);
+        LineItem.St := Error^.Statement + 1;
+      End;
+    End;
+
+  End;
+  Dec(SP_StackPtr);
+
+  StrContent := SP_StackPtr^.Str;
+  Dec(SP_StackPtr);
+
+  Step := 1;
+  SP_UpdateFOREACHVar_Str(VarIdx, VarName, StrContent, Step, LineItem.Line, LineItem.Statement, LineItem.St, VarPtr, Info^.Error^);
+
+End;
+
 Procedure SP_Interpret_FOR_EACH_RANGE(Var Info: pSP_iInfo);
 Var
   VarIdx, NumRanges: Integer;
@@ -20921,6 +21189,14 @@ Begin
       SP_STRVAR_LET:
         Begin
           nOutput := 'STRVAR LET ['+StringCopy(@Tokens, 1 + (NativeUInt(StrPtr) - NativeUInt(StrStart)) + SizeOf(LongWord), Token^.TokenLen - SizeOf(LongWord))+'$]';
+          Inc(StrPtr, Token^.TokenLen);
+        End;
+
+      SP_HYBRID_LET:
+        Begin
+          s := StringCopy(@Tokens, 1 + (NativeUInt(StrPtr) - NativeUInt(StrStart)) + SizeOf(LongWord), Token^.TokenLen - SizeOf(LongWord));
+          s[1] := aChar(Ord(s[1]) - 128);
+          nOutput := 'HYBRID LET [' + s + ']';
           Inc(StrPtr, Token^.TokenLen);
         End;
 
@@ -24095,6 +24371,11 @@ Var
   sp1: pSP_StackItem;
 Begin
 
+  If SCREENBPP <> 32 Then Begin
+    Info^.Error^.Code := SP_ERR_INVALID_DEPTH;
+    Exit;
+  End;
+
   Angle := 0;
   NumParams := Round(SP_StackPtr^.Val);
   Dec(SP_StackPtr);
@@ -24129,6 +24410,11 @@ Var
   YPos, XPos, dXPos, dYPos, Angle: aFloat; NumParams: Integer;
   Sp1, Sp2: pSP_StackItem;
 Begin
+
+  If SCREENBPP <> 32 Then Begin
+    Info^.Error^.Code := SP_ERR_INVALID_DEPTH;
+    Exit;
+  End;
 
   Angle := 0;
   NumParams := Round(SP_StackPtr^.Val);
@@ -24180,6 +24466,11 @@ Var
   tBool: Boolean;
 Begin
 
+  If SCREENBPP <> 32 Then Begin
+    Info^.Error^.Code := SP_ERR_INVALID_DEPTH;
+    Exit;
+  End;
+
   Dist := SP_StackPtr^.Val;
   Dec(SP_StackPtr);
 
@@ -24207,6 +24498,11 @@ Var
   gBank: pSP_Bank;
   Graphic: pSP_Graphic_Info;
 Begin
+
+  If SCREENBPP <> 32 Then Begin
+    Info^.Error^.Code := SP_ERR_INVALID_DEPTH;
+    Exit;
+  End;
 
   tw := 0; th := 0;
 
@@ -24285,6 +24581,11 @@ Var
   Graphic: pSP_Graphic_Info;
 Begin
 
+  If SCREENBPP <> 32 Then Begin
+    Info^.Error^.Code := SP_ERR_INVALID_DEPTH;
+    Exit;
+  End;
+
   tw := 0; th := 0;
   BankFill := False;
   If SP_StackPtr^.OpType = SP_VALUE Then Begin
@@ -24356,6 +24657,11 @@ End;
 Procedure SP_Interpret_AFILLTEX(Var Info: pSP_iInfo);
 Begin
 // alpha
+  If SCREENBPP <> 32 Then Begin
+    Info^.Error^.Code := SP_ERR_INVALID_DEPTH;
+    Exit;
+  End;
+
 End;
 
 Procedure SP_Interpret_ARECTFILL(Var Info: pSP_iInfo);
@@ -24367,6 +24673,11 @@ Var
   gBank: pSP_Bank;
   Graphic: pSP_Graphic_Info;
 Begin
+
+  If SCREENBPP <> 32 Then Begin
+    Info^.Error^.Code := SP_ERR_INVALID_DEPTH;
+    Exit;
+  End;
 
   tw := 0; th := 0;
   BankFill := False;
@@ -24439,6 +24750,11 @@ Var
   Y1, H, X1, W, X2, Y2: aFloat;
 Begin
 
+  If SCREENBPP <> 32 Then Begin
+    Info^.Error^.Code := SP_ERR_INVALID_DEPTH;
+    Exit;
+  End;
+
   H := SP_StackPtr^.Val;
   Dec(SP_StackPtr);
   W := SP_StackPtr^.Val;
@@ -24472,6 +24788,11 @@ Var
   gBank: pSP_Bank;
   Graphic: pSP_Graphic_Info;
 Begin
+
+  If SCREENBPP <> 32 Then Begin
+    Info^.Error^.Code := SP_ERR_INVALID_DEPTH;
+    Exit;
+  End;
 
   tw := 0; th := 0;
   BankFill := False;
@@ -24545,6 +24866,11 @@ Var
   Points: Array of TSP_Point;
   IsOpen: Boolean;
 Begin
+
+  If SCREENBPP <> 32 Then Begin
+    Info^.Error^.Code := SP_ERR_INVALID_DEPTH;
+    Exit;
+  End;
 
   IsOpen := SP_StackPtr^.Val = 1;
   Dec(SP_StackPtr);
@@ -24638,6 +24964,11 @@ Var
 Label
   DrawIt;
 Begin
+
+  If SCREENBPP <> 32 Then Begin
+    Info^.Error^.Code := SP_ERR_INVALID_DEPTH;
+    Exit;
+  End;
 
   tw := 0; th := 0;
   BankFill := False;
@@ -24755,6 +25086,11 @@ Var
   Radius1, Radius2: Integer;
 Begin
 
+  If SCREENBPP <> 32 Then Begin
+    Info^.Error^.Code := SP_ERR_INVALID_DEPTH;
+    Exit;
+  End;
+
   If WINSCALE Then Begin
     R := SP_StackPtr^.Val;
     Radius1 := Round(R/WINSCALEX);
@@ -24786,6 +25122,11 @@ Var
   dX, dY: aFloat;
   Idx, iSize, vIdx, pIdx: Integer;
 Begin
+
+  If SCREENBPP <> 32 Then Begin
+    Info^.Error^.Code := SP_ERR_INVALID_DEPTH;
+    Exit;
+  End;
 
   VarName := Lower(SP_StackPtr^.Str);
   ERRStr := VarName;
@@ -24841,7 +25182,6 @@ Begin
     Dec(SP_StackPtr);
     SP_ConvertToOrigin_d(dX, dY);
     If WINFLIPPED Then dY := (SCREENHEIGHT - 1) - dY;
-    log(floatToStr(dx)+','+floatToStr(dy));
     xPos := Round(dX); yPos := Round(dY);
     SP_SetPixel32Alpha(xPos, yPos);
     If SCREENVISIBLE Then SP_SetDirtyRect(SCREENX + XPos, SCREENY + YPos, SCREENX + XPos, SCREENY + YPos);
@@ -24857,6 +25197,11 @@ Var
   YPos, XPos, Angle: aFloat; NumParams: Integer;
   Sp1: pSP_StackItem;
 Begin
+
+  If SCREENBPP <> 32 Then Begin
+    Info^.Error^.Code := SP_ERR_INVALID_DEPTH;
+    Exit;
+  End;
 
   Angle := 0;
 
@@ -24894,6 +25239,11 @@ Var
   RadiusX, RadiusY: Integer;
 Begin
 
+  If SCREENBPP <> 32 Then Begin
+    Info^.Error^.Code := SP_ERR_INVALID_DEPTH;
+    Exit;
+  End;
+
   If WINSCALE Then Begin
     Ry := SP_StackPtr^.Val;
     Dec(SP_StackPtr);
@@ -24927,6 +25277,11 @@ Var
   N: Integer;
 Begin
 
+  If SCREENBPP <> 32 Then Begin
+    Info^.Error^.Code := SP_ERR_INVALID_DEPTH;
+    Exit;
+  End;
+
   N := Round(SP_StackPtr^.Val);
   Dec(SP_StackPtr);
   Y2 := SP_StackPtr^.Val;
@@ -24955,6 +25310,11 @@ Var
   Y1, X1, X2, Y2, X3, Y3: aFloat;
   N: Integer;
 Begin
+
+  If SCREENBPP <> 32 Then Begin
+    Info^.Error^.Code := SP_ERR_INVALID_DEPTH;
+    Exit;
+  End;
 
   N := Round(SP_StackPtr^.Val);
   Dec(SP_StackPtr);
@@ -24989,6 +25349,11 @@ Var
   Ink: Byte;
 Begin
 
+  If SCREENBPP <> 32 Then Begin
+    Info^.Error^.Code := SP_ERR_INVALID_DEPTH;
+    Exit;
+  End;
+
   dX := SP_StackPtr^.Val;
   Dec(SP_StackPtr);
   dY := SP_StackPtr^.Val;
@@ -25012,6 +25377,11 @@ Procedure SP_Interpret_ARECTANGLE(Var Info: pSP_iInfo);
 Var
   Y1, Y2, X1, X2: aFloat;
 Begin
+
+  If SCREENBPP <> 32 Then Begin
+    Info^.Error^.Code := SP_ERR_INVALID_DEPTH;
+    Exit;
+  End;
 
   Y2 := SP_StackPtr^.Val;
   Dec(SP_StackPtr);
@@ -25047,6 +25417,11 @@ Var
   dX, dY: aFloat;
   Idx, iSize, vIdx, pIdx: Integer;
 Begin
+
+  If SCREENBPP <> 32 Then Begin
+    Info^.Error^.Code := SP_ERR_INVALID_DEPTH;
+    Exit;
+  End;
 
   VarName := Lower(SP_StackPtr^.Str);
   ERRStr := VarName;
@@ -25102,10 +25477,10 @@ Var
   AddReturn: Boolean;
 Begin
 
-  // This is the first keyword to be interpreted, and is a template for how this will work for
-  // other keywords.
-
-  // Repeat: Unstack values and PRINT them, until there are no values left. That's it :)
+  If SCREENBPP <> 32 Then Begin
+    Info^.Error^.Code := SP_ERR_INVALID_DEPTH;
+    Exit;
+  End;
 
   PrItem := '';
   AddReturn := True;
@@ -25216,6 +25591,11 @@ Var
   Item: TUsingItem;
   AddReturn: Boolean;
 Begin
+
+  If SCREENBPP <> 32 Then Begin
+    Info^.Error^.Code := SP_ERR_INVALID_DEPTH;
+    Exit;
+  End;
 
   PrItem := '';
   AddReturn := True;
@@ -25909,6 +26289,8 @@ Initialization
   InterpretProcs[SP_KW_PR_ITALIC] := @SP_Interpret_PR_ITALIC;
   InterpretProcs[SP_KW_PR_BOLD] := @SP_Interpret_PR_BOLD;
   InterpretProcs[SP_KW_LET] := @SP_Interpret_LET;
+  InterpretProcs[SP_KW_ENUM_BASE] := @SP_Interpret_ENUM_BASE;
+  InterpretProcs[SP_KW_ENUM] := @SP_Interpret_ENUM;
   InterpretProcs[SP_KW_CLS] := @SP_Interpret_CLS;
   InterpretProcs[SP_KW_DIM] := @SP_Interpret_DIM;
   InterpretProcs[SP_KW_AUTODIM] := @SP_Interpret_AUTODIM;
@@ -25944,7 +26326,6 @@ Initialization
   InterpretProcs[SP_KW_INCRANGE] := @SP_Interpret_INCRANGE;
   InterpretProcs[SP_KW_DEC] := @SP_Interpret_DEC;
   InterpretProcs[SP_KW_DECRANGE] := @SP_Interpret_DECRANGE;
-  InterpretProcs[SP_KW_SWAP] := @SP_Interpret_SWAP;
   InterpretProcs[SP_KW_PALETTE] := @SP_Interpret_PALETTE;
   InterpretProcs[SP_KW_PAL_HSV] := @SP_Interpret_PALETTE_HSV;
   InterpretProcs[SP_KW_PALSHIFT] := @SP_Interpret_PALETTESHIFT;
@@ -26016,6 +26397,10 @@ Initialization
   InterpretProcs[SP_KW_CLEAR_ERR] := @SP_Interpret_CLEAR_ERR;
   InterpretProcs[SP_KW_FILL] := @SP_Interpret_FILL;
   InterpretProcs[SP_KW_FILLTEX] := @SP_Interpret_FILLTEX;
+  InterpretProcs[SP_KW_ARECTANGLE_TO] := @SP_Interpret_ARECTANGLE_TO;
+  InterpretProcs[SP_KW_ARECTFILL_TO] := @SP_Interpret_ARECTFILL_TO;
+  InterpretProcs[SP_KW_RECTANGLE_TO] := @SP_Interpret_RECTANGLE_TO;
+  InterpretProcs[SP_KW_RECTFILL_TO] := @SP_Interpret_RECTFILL_TO;
   InterpretProcs[SP_KW_RECTANGLE] := @SP_Interpret_RECTANGLE;
   InterpretProcs[SP_KW_RECTFILL] := @SP_Interpret_RECTFILL;
   InterpretProcs[SP_KW_POLYLINE] := @SP_Interpret_POLYLINE;
@@ -26034,6 +26419,7 @@ Initialization
   InterpretProcs[SP_KW_WAIT] := @SP_Interpret_WAIT;
   InterpretProcs[SP_KW_WAIT_KEY] := @SP_Interpret_WAIT_KEY;
   InterpretProcs[SP_KW_WAIT_KEY_PRESS] := @SP_Interpret_WAIT_KEY_PRESS;
+  InterpretProcs[SP_KW_WAIT_KEY_UP] := @SP_Interpret_WAIT_KEY_UP;
   InterpretProcs[SP_KW_BANK] := @SP_Interpret_BANK_NEW;
   InterpretProcs[SP_KW_BANK_SIZE] := @SP_Interpret_BANK_SIZE;
   InterpretProcs[SP_KW_BANK_ERASE] := @SP_Interpret_BANK_ERASE;
@@ -26241,6 +26627,7 @@ Initialization
   InterpretProcs[SP_KW_OUT_SCREEN] := @SP_Interpret_OUT_SCREEN;
   InterpretProcs[SP_KW_OUT_STREAM] := @SP_Interpret_OUT_STREAM;
   InterpretProcs[SP_KW_FOR_EACH_RANGE] := @SP_Interpret_FOR_EACH_RANGE;
+  InterpretProcs[SP_KW_FOR_EACH_STRING] := @SP_Interpret_FOR_EACH_STRING;
   InterpretProcs[SP_KW_WIN_MERGE] := @SP_Interpret_WIN_MERGE;
   InterpretProcs[SP_KW_WIN_MERGEALL] := @SP_Interpret_WIN_MERGEALL;
   InterpretProcs[SP_KW_CASE] := @SP_Interpret_CASE;
@@ -26412,6 +26799,7 @@ Initialization
   InterpretProcs[SP_FN_RND] := @SP_Interpret_FN_RND;
   InterpretProcs[SP_FN_STK] := @SP_Interpret_FN_STK;
   InterpretProcs[SP_FN_STKS] := @SP_Interpret_FN_STKS;
+  InterpretProcs[SP_FN_CLIPS] := @SP_Interpret_FN_CLIPS;
   InterpretProcs[SP_FN_INKEYS] := @SP_Interpret_FN_INKEYS;
   InterpretProcs[SP_FN_KEY] := @SP_Interpret_FN_KEY;
   InterpretProcs[SP_FN_PI] := @SP_Interpret_FN_PI;
@@ -26549,6 +26937,7 @@ Initialization
   InterpretProcs[SP_FN_FEXISTS] := @SP_Interpret_FN_FEXISTS;
   InterpretProcs[SP_FN_FPATH] := @SP_Interpret_FN_FPATH;
   InterpretProcs[SP_FN_FNAME] := @SP_Interpret_FN_FNAME;
+  InterpretProcs[SP_FN_REVS] := @SP_Interpret_FN_REVS;
   InterpretProcs[SP_FN_DEXISTS] := @SP_Interpret_FN_DEXISTS;
   InterpretProcs[SP_FN_PYTH] := @SP_Interpret_FN_PYTH;
   InterpretProcs[SP_FN_LOGW] := @SP_Interpret_FN_LOGW;
@@ -26644,6 +27033,7 @@ Initialization
   InterpretProcs[SP_VALUE] := @SP_Interpret_SP_VALUE;
   InterpretProcs[SP_NUMVAR_LET] := @SP_Interpret_SP_NUMVAR_LET;
   InterpretProcs[SP_STRVAR_LET] := @SP_Interpret_SP_STRVAR_LET;
+  InterpretProcs[SP_HYBRID_LET] := @SP_Interpret_SP_HYBRID_LET;
   InterpretProcs[SP_INCVAR] := @SP_Interpret_SP_INCVAR;
   InterpretProcs[SP_DECVAR] := @SP_Interpret_SP_DECVAR;
   InterpretProcs[SP_MULVAR] := @SP_Interpret_SP_MULVAR;

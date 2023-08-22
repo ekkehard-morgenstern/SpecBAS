@@ -44,6 +44,7 @@ Type
   End;
 
 Function  SP_TokeniseLine(Line: aString; IsExpression, AddLineNum: Boolean): aString;
+Function  SP_IsHybridFn(const Idx: LongWord): Boolean;
 Function  SP_IsReserved(Const Line: aString): Boolean;
 Function  SP_IsConstant(Const Line: aString): Integer;
 Function  SP_IsKeyWord(Const Line: aString): Integer;
@@ -79,7 +80,7 @@ Const
   // List of keywords that are used in statements.
   // MUST Be in this order - add new commands to the end of the list.
 
-  SP_KEYWORDS_EXTRA: Array[0..251] of aString =
+  SP_KEYWORDS_EXTRA: Array[0..252] of aString =
     ('SPECTRUM ', 'PLAY ', 'AT ', 'TAB ', 'LINE ', ' THEN ', ' TO ', ' STEP ',
      'DEF ', 'CAT ', ' FORMAT ', 'MOVE ', 'ERASE ', 'OPEN ', 'CLOSE ', 'MERGE ', 'BEEP ',
      'CIRCLE ', 'INK ', 'PAPER ', 'INVERSE ', 'OUT ', 'STOP ', 'READ ', ' DATA ',
@@ -109,7 +110,7 @@ Const
      'BOLD ', 'ITALIC ', 'FILTER ', 'INSERT ', 'MENUITEM ', 'MEMWRT ', 'MEMWRTD ', 'MEMWRTQ ',
      'MEMWRT$ ', 'REPEAT', 'PARTICLE ', 'FRICTION ', 'GRAVITY ', 'FORCE ', 'INSTALL', 'MEMWRTF ',
      'PRESS', 'TURNS', 'GRADIANS', 'EGA', 'CGA', 'ADDCTRL', 'CTRL', 'PROP$ ', 'OLD', ' ASYNC',
-     'COMPILE ', 'APPLEHGR', 'APPLELGR', 'CPC');
+     'COMPILE ', 'APPLEHGR', 'APPLELGR', 'CPC', 'ENUM ');
 
   // Constants used to quickly identify keywords when in token form. Each keyword listed
   // above has a corresponding constant, which must be SP_KEYWORD_BASE + (Index of Keyword above).
@@ -368,6 +369,8 @@ Const
   SP_KW_APPLEHGR            = 1249;
   SP_KW_APPLELGR            = 1250;
   SP_KW_CPC                 = 1251;
+  SP_KW_ENUM                = 1252;
+
 
   // These are meta-commands; they do not appear in listings, and are used during
   // execution only, having been inserted by the pre-processor.
@@ -725,10 +728,17 @@ Const
   SP_KW_PAL_APPLEHGR        = 4401;
   SP_KW_PAL_CPC             = 4402;
   SP_KW_STREAM_READLN       = 4403;
+  SP_KW_ARECTANGLE_TO       = 4404;
+  SP_KW_ARECTFILL_TO        = 4405;
+  SP_KW_RECTANGLE_TO        = 4406;
+  SP_KW_RECTFILL_TO         = 4407;
+  SP_KW_WAIT_KEY_UP         = 4408;
+  SP_KW_FOR_EACH_STRING     = 4409;
+  SP_KW_ENUM_BASE           = 4410;
 
   // Names of the above meta-keywords - for use by the DEBUG command.
 
-  SP_Keyword_Names: Array[0..352] of aString =
+  SP_Keyword_Names: Array[0..359] of aString =
     ('PR INK', 'PR PAPER', 'PR INVERSE', 'PR TAB', 'PR AT', 'PR MOVE', 'GOTO', 'GOSUB', 'PALSHIFT',
      'READ ASSIGN', 'DRAWTO', 'SCR LOCK', 'SCR UNLOCK', 'SCR UPDATE', 'SCR RES', 'WIN NEW', 'WIN DEL',
      'WIN MOVE', 'WIN SIZE', 'WIN FRONT', 'WIN BACK', 'WIN SHOW', 'WIN HIDE', 'SCR GRAB', 'WIN GRAB',
@@ -778,12 +788,13 @@ Const
      'SPRITE FRONT', 'SPRITE BACK', 'SPRITE FRONT ADD', 'SPRITE BACK DEC', 'CHANNEL RATE STRING', 'GFX SCALE XY',
      'GFX SCALE TO', 'SCREEN SAVE', 'GRAPHIC SAVE', 'WAIT KEY', 'WAIT KEY PRESS', 'PALETTE EGA', 'PALETTE CGA',
      'WINDOW ADD CONTROL', 'ORIGIN FLIP', 'WIN ORG FLIP', 'PLAY STOP', 'MOUSE TO ', 'PALETTE APPLE LGR',
-     'PALETTE APPLE HGR', 'PALETTE CPC', 'STREAM READLN');
+     'PALETTE APPLE HGR', 'PALETTE CPC', 'STREAM READLN', 'A-RECTANGLE TO', 'A-RECTFILL TO', 'RECTANGLE TO',
+     'RECTFILL TO', 'WAIT KEY UP', 'FOR EACH STRING', 'ENUM BASE');
 
   // List of Functions that are used in expressions. Again, MUST be in order.
   // Functions that take only one parameter have a space at the end of their name. All others have no spaces.
 
-  SP_FUNCTIONS_EXTRA: Array[0..271] of aString =
+  SP_FUNCTIONS_EXTRA: Array[0..273] of aString =
     ('nRND', 'nINKEY$', 'oPI', 'nVAL$ ', 'oCODE ', 'oVAL ', 'oLEN ', 'nSIN ', 'nCOS ',
      'nTAN ', 'nASN ', 'nACS ', 'nATN ', 'oLN ', 'oEXP ', 'oINT ', 'oSQR ', 'oSGN ', 'oABS ', 'n IN ',
      'nUSR ', 'oSTR$ ','oCHR$ ', 'nPEEK ', 'oNOT ', 'o OR ', 'o AND ', 'o MOD ', 'o XOR ', 'o SHL ',
@@ -809,12 +820,12 @@ Const
      'nLTOPY ', 'nmSECS', 'oINV ', 'oPOLYTERM', 'oUNDER', 'nCOMPSIMPSON', 'nMUSICPOS', 'nMUSICLEN',
      'oBASE$', 'oIIF', 'oIIF$', 'nSEARCH', 'o MUL ', 'o DIV ', 'o ADD ', 'o SUB ', 'oGCD', 'oLCM', 'oDET',
      'oBIN ', 'nSPFRAME ', 'nSPCOLL ', 'nTEXTURE$ ', 'nINZONE', 'nMATCH', 'oDECIMAL', 'oUSING$', 'oJOIN$',
-     'oLBOUND', 'oUBOUND', 'oARSIZE', 'oMANDEL', 'oHEX', 'nSCREEN$', 'nDATE$ ', 'nTIME$ ', 'oREPLACE$',
+     'oLBOUND', 'oUBOUND', 'oARSIZE', 'oMANDEL', 'oHEX ', 'nSCREEN$', 'nDATE$ ', 'nTIME$ ', 'oREPLACE$',
      'oIVAL ', 'oREPMATCH$', 'nATTR ', 'nMIATTR', 'nLASTM', 'nLASTMI', 'nKEY$ ', 'nSPCLX ', 'nSPCLY ',
      'nDATADDR', 'nWINADDR', 'nMEMRD', 'nDMEMRD', 'nQMEMRD', 'nMEMRD$', 'nSTRADDR ', 'oCHOOSE', 'oCHOOSE$',
      'oTAU', 'nMILLISECONDS', 'oBINV', 'oBREV', 'oINTERP', 'oMIN$', 'oMAX$', 'nFMEMRD', 'nTXTw', 'nTXTh',
      'nNOISE', 'nOCTNOISE', 'oPAR ', 'oMAP', 'o EQV ', 'o IMP ', 'oSINH ', 'oCOSH ', 'oTANH ', 'oASNH ',
-     'oACSH ', 'oATNH ', 'oMID', 'nPARAM$', 'nSTK', 'nSTK$');
+     'oACSH ', 'oATNH ', 'oMID', 'nPARAM$', 'nSTK', 'nSTK$', 'oREV$ ', 'nCLIP$');
 
   // Constants, like above, for identifying Functions in token form
 
@@ -1092,6 +1103,8 @@ Const
   SP_FN_PARAMS              = 2269;
   SP_FN_STK                 = 2270;
   SP_FN_STKS                = 2271;
+  SP_FN_REVS                = 2272;
+  SP_FN_CLIPS               = 2273;
 
   // Meta-functions
 
@@ -1188,6 +1201,7 @@ Const
   SP_RESTORECOLOURS         = 76;
   SP_NOTVAR                 = 77;
   SP_IJMP                   = 78;
+  SP_HYBRID_LET             = 79;
   SP_JUMP                   = 100;
   SP_RUN                    = 101;
   SP_NEW                    = -2;
@@ -1269,9 +1283,25 @@ Const
   SP_TRUE                   = 1;
   SP_FALSE                  = 0;
 
+  HybridFns: Array[0..0] of LongWord = (SP_FN_CLIPS);
+
 implementation
 
 Uses SP_Main, SP_Editor, SP_FileIO, SP_SysVars, {$IFDEF FPC}LclIntf{$ELSE}Windows{$ENDIF};
+
+Function SP_IsHybridFn(const Idx: LongWord): Boolean;
+Var
+  i: Integer;
+Begin
+  i := 0;
+  Result := False;
+  While i <= High(HybridFns) do
+    if HybridFns[i] = Idx Then Begin
+      Result := True;
+      Exit;
+    End Else
+      Inc(i);
+End;
 
 Function SP_TokeniseLine(Line: aString; IsExpression, AddLineNum: Boolean): aString;
 Var
@@ -1416,10 +1446,15 @@ Begin
                     Inc(Idx);
                     If StoreText[Length(StoreText)] = '$' Then Break;
                   End;
-                  If Line[Idx -1] = '$' Then
-                    AddToResult(aChar(SP_STRUCT_MEMBER_S) + LongWordToString(Length(StoreText)) + StoreText)
-                  Else
-                    AddToResult(aChar(SP_STRUCT_MEMBER_N) + LongWordToString(Length(StoreText)) + StoreText);
+                  If Not SP_IsReserved(Upper(StoreText)) Then Begin
+                    If Line[Idx -1] = '$' Then
+                      AddToResult(aChar(SP_STRUCT_MEMBER_S) + LongWordToString(Length(StoreText)) + StoreText)
+                    Else
+                      AddToResult(aChar(SP_STRUCT_MEMBER_N) + LongWordToString(Length(StoreText)) + StoreText);
+                  End Else Begin
+                    AddToResult(aChar(SP_SYMBOL) + Line[StoreVal]);
+                    Idx := StoreVal +1;
+                  End;
                 End;
               End;
             End Else
@@ -1582,18 +1617,20 @@ Begin
                   If KeyWord > -1 Then Begin
                     If KeyWord + SP_FUNCTION_BASE = SP_FN_HEX Then Begin
                       AddToResult(aChar(SP_FUNCTION) + LongWordToString(KeyWord + SP_FUNCTION_BASE));
+                      TempVal := Idx -2;
                       Inc(Idx);
                       SP_SkipSpaces(Line, Idx);
                       StoreText := '';
                       StoreLen := 0;
-                      While Line[Idx] in ['A'..'F', 'a'..'f', '0'..'9'] Do Begin
+                      While (Idx < Length(Line)) And (Line[Idx] in ['A'..'F', 'a'..'f', '0'..'9']) Do Begin
                         StoreText := StoreText + Line[Idx];
                         Inc(StoreLen);
                         Inc(Idx);
                       End;
-                      If StoreLen <> 0 Then
+                      If StoreLen <> 0 Then Begin
+                        TempVal := Idx + 2;
                         AddToResult(aChar(SP_NUMVAR) + LongWordToString(0) + LongWordToString(StoreLen) + StoreText);
-                      TempVal := Idx;
+                      End;
                       Dec(Idx, 3);
                     End Else
                       If KeyWord + SP_FUNCTION_BASE = SP_FN_AND Then
@@ -1934,6 +1971,10 @@ Begin
         If Result And (Idx <= l) Then Begin
           If Line[Idx] in ['E','e'] Then Begin
             Inc(Idx);
+            If Not (Line[Idx] in ['-', '+', '0'..'9']) Then  Begin
+              Dec(Idx);
+              Exit;
+            End;
             Exponent := 0;
             NegExp := False;
             If Idx <= l Then
@@ -2291,8 +2332,8 @@ Begin
             SP_CHAR_NOT: NewWord := 'NOT ';
             SP_CHAR_EQV: NewWord := ' EQV ';
             SP_CHAR_IMP: NewWord := ' IMP ';
-            '&': NewWord := ' & ';
-            '|': NewWord := ' | ';
+            '&': NewWord := '&';
+            '|': NewWord := '|';
             '(':
               Begin
                 If Length(Result) > 0 Then Begin
@@ -3030,5 +3071,10 @@ Initialization
   End;
 
   SP_MakeKeywordLUT;
+
+Finalization
+
+  While InterpreterThreadAlive Do
+    CB_YIELD;
 
 end.

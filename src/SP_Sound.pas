@@ -924,16 +924,12 @@ Begin
         End;
         If Panning = -9 Then
           Panning := Sample_Info.Panning;
-        If (Panning < -1) or (Panning > 1) Then Begin
-          Error.Code := SP_ERR_PAN_OUT_OF_RANGE;
-          Exit;
-        End;
+        If (Panning < -1) or (Panning > 1) Then
+          Panning := Sign(Panning);
         If Volume = -1 Then
           Volume := Sample_Info.Volume;
-        If (Volume < 0) or (Volume > 1) Then Begin
-          Error.Code := SP_ERR_VOLUME_OUT_OF_RANGE;
-          Exit;
-        End;
+        If (Volume < 0) or (Volume > 1) Then
+          Volume := Ord(Volume > 1);
 
         BASS_ChannelSetAttribute(Channel, BASS_ATTRIB_FREQ, Rate);
         {$IFNDEF RASPI}
@@ -1767,7 +1763,7 @@ Begin
         Begin
           Inc(i);
         End;
-      '&': // Rest
+      '&', 'R': // Rest
         Begin
           Inc(i);
           While (CB_GETTICKS - Ticks < CurNoteLen_Ticks) And Not Halted Do Begin
@@ -2446,8 +2442,11 @@ Begin
 
   PLAYLock.Leave;
 
-  If i = -1 Then
+  If i = -1 Then Begin
+    If Assigned(BEEPMonitor) Then
+      BEEPMonitor.Terminate;
     While Length(PLAYPool) > 0 Do CB_YIELD;
+  End;
 
 End;
 
@@ -2459,7 +2458,7 @@ Initialization
 Finalization
 
   PLAYSignalHalt(-1);
-  BEEPMonitor.Terminate;
+  If Assigned(BEEPMonitor) Then BEEPMonitor.Terminate;
   PLAYLock.Free;
 
 end.

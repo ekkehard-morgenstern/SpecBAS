@@ -81,10 +81,10 @@ Type
 
   TSP_NUMARRAY = Record
     Name: aString;
-    Size, NumIndices, Base, LastSearchIdx: Integer;
+    Size, NumIndices, Base, LastSearchIdx: NativeInt;
     LastSearchTerm: aFloat;
     Values: Array of pSP_NumVarContent;
-    Indices: Array of Integer;
+    Indices: Array of NativeInt;
     Hashes: Array[0..255] of pHashEntry;
     DynArray: Boolean;
     DynHashes: Array of pHashEntry;
@@ -93,9 +93,9 @@ Type
 
   TSP_STRARRAY = Packed Record
     Name, LastSearchTerm: aString;
-    Size, NumIndices, Base, LastSearchIdx, DLen: Integer;
+    Size, NumIndices, Base, LastSearchIdx, DLen: NativeInt;
     Strings: Array of pSP_StrVarContent;
-    Indices: Array of Integer;
+    Indices: Array of NativeInt;
     Hashes: Array[0..255] of pHashEntry;
     DynArray: Boolean;
     DynHashes: Array of pHashEntry;
@@ -246,6 +246,7 @@ Procedure SP_ClearStructs;
 
 Function  SP_UpdateFOREACHVar(Idx: Integer; const Name, ArrayName: aString; Var Step: aFloat; LoopLine, LoopStatement, St: Integer; Ptr: pLongWord; Var Error: TSP_ErrorCode): Integer;
 Function  SP_UpdateFOREACHRANGEVar(Idx: Integer; const Name, EachString: aString; Var NumRanges, LoopLine, LoopStatement, St: Integer; Ptr: pLongWord; Var Error: TSP_ErrorCode): Integer;
+Function  SP_UpdateFOREACHVar_Str(Idx: Integer; const Name, StrContent: aString; Var Step: aFloat; LoopLine, LoopStatement, St: Integer; Ptr: pLongWord; Var Error: TSP_ErrorCode): Integer;
 
 Procedure SP_SortNumArray(sIdx: Integer; Key, Ascending: Boolean; Var Error: TSP_ErrorCode);
 Procedure SP_SortStrArray(sIdx: Integer; Key, Ascending: Boolean; Var Error: TSP_ErrorCode);
@@ -284,6 +285,7 @@ Const
   SP_FOREACH = 3;
   SP_STRVAR = 4;
   SP_FOREACHRANGE = 5;
+  SP_FOREACHSTRING = 6;
 
 implementation
 
@@ -1019,7 +1021,7 @@ End;
 
 Function SP_CreateNumArray(const Name: aString; const Indices: aString; Base: Integer; Dyn: Boolean; Var Error: TSP_ErrorCode): Integer;
 Var
-  Idx, pIdx, IndexCount: Integer;
+  Idx, pIdx, IndexCount: NativeInt;
   LongWordPtr: pLongWord;
 Begin
 
@@ -1272,7 +1274,7 @@ End;
 
 Function SP_UpdateNumArray(Var Idx: Integer; const Name: aString; const Indices, Key: ansiString; Var Value: aFloat; Var Error: TSP_ErrorCode): Integer; inline;
 Var
-  Offset: Integer;
+  Offset: NativeInt;
   LastPtr, Ptr: pHashEntry;
 Begin
 
@@ -2278,7 +2280,7 @@ Var
   Idx, Idx2, Idx3, Idx4, sIdx, pStatement,
   LabelPos, LabelLen, ProcIdx, LastStrAt, LastStrLen, DATALine, DATAStatement: Integer;
   Tokens, Name, s: aString;
-  Changed, Reference, NewStatement: Boolean;
+  Changed, Reference, NewStatement, IsVar: Boolean;
   TempLine, cLine: TSP_GOSUB_Item;
   xVar: pVarType;
   KeyWord, MaxLineNum, cKW, LastKW, CurLine: LongWord;
@@ -2328,7 +2330,7 @@ Begin
   SetLength(LineLUT, 0);
 
   If Not PAYLOADPRESENT Then
-    SP_CompileProgram;
+    SP_ForceCompile;
 
   sIdx := -1;
   if CmdTokens <> '' then
@@ -2576,12 +2578,24 @@ Begin
           SP_POINTER, SP_NUMVAR_LET_VALID, SP_STRVAR_LET_VALID, SP_INCVAR, SP_DECVAR, SP_MULVAR, SP_DIVVAR,
           SP_POWVAR, SP_MODVAR, SP_ANDVAR, SP_ORVAR, SP_NOTVAR, SP_XORVAR:
             Begin
-              If ClearVars Then Begin
-                pLongWord(@Tokens[Idx2])^ := 0;
-                Inc(Idx2, Tkn^.TokenLen);
-                Changed := True;
-              End Else
-                Inc(Idx2, Tkn^.TokenLen);
+              IsVar := True;
+              If Tkn^.Token in [SP_STRVAR_LET, SP_NUMVAR_LET] Then Begin
+                Name := StringFromPtrB(@Tokens[Idx2 + SizeOf(LongWord)], Tkn^.TokenLen - SizeOf(LongWord));
+                If Name[1] > #127 Then Begin
+                  // A high bit set on the first char of the var name indicates a hybrid function -
+                  // a function that can be written to. Convert to that token type now.
+                  Tkn^.Token := SP_HYBRID_LET;
+                  SP_AddHandlers(Tokens);
+                  Changed := True;
+                  IsVar := False;
+                End;
+              End;
+              If IsVar Then
+                If ClearVars Then Begin
+                  pLongWord(@Tokens[Idx2])^ := 0;
+                  Changed := True;
+                End;
+              Inc(Idx2, Tkn^.TokenLen);
             End;
           SP_KEYWORD:
             Begin
@@ -2788,6 +2802,8 @@ Begin
 
   For Idx := 0 To SP_NextCount -1 Do Begin
     TempLine := SP_ConvertLineStatement(SP_FindLine(SP_NextEntries[Idx].Line, False), SP_NextEntries[Idx].Statement);
+    If TempLine.Line = -1 Then // Off the end of the program?
+      TempLine.Line := SP_FindLine(SP_NextEntries[Idx].Line, False);
     SP_NextEntries[Idx].Line := TempLine.Line;
     SP_NextEntries[Idx].Statement := TempLine.Statement;
   End;
@@ -2795,6 +2811,7 @@ Begin
   // Finally, insert breakpoint flags if necessary
 
   SP_PrepareBreakpoints(True);
+  FN_Recursion_Count := 0;
 
 End;
 
@@ -4809,6 +4826,41 @@ Begin
 
 End;
 
+Function  SP_UpdateFOREACHVar_Str(Idx: Integer; const Name, StrContent: aString; Var Step: aFloat; LoopLine, LoopStatement, St: Integer; Ptr: pLongWord; Var Error: TSP_ErrorCode): Integer;
+Var
+  nName: aString;
+Begin
+
+  If Idx = 0 Then Begin
+    nName := Copy(Name, 1, Length(Name) -1);
+    Idx := SP_FindStrVar(nName);
+    If Idx = -1 Then Begin
+      Idx := SP_NewStrVar;
+      StrVars[Idx]^.Name := nName;
+      StrVars[Idx]^.ProcVar := SP_ProcStackPtr > -1;
+      StrVars[Idx]^.ContentPtr := @StrVars[Idx]^.Content;
+      If Not StrVars[Idx]^.ProcVar Then Ptr^ := Idx +1;
+    End;
+  End Else
+    Idx := Idx -1;
+
+  StrVars[Idx]^.ContentPtr^.EachIndex := 1;
+  StrVars[Idx]^.ContentPtr^.EachArrayIndex := 0;
+  StrVars[Idx]^.ContentPtr^.Step := Step;
+  StrVars[Idx]^.ContentPtr^.LoopLine := LoopLine;
+  StrVars[Idx]^.ContentPtr^.LoopStatement := LoopStatement;
+  StrVars[Idx]^.ContentPtr^.St := St;
+  StrVars[Idx]^.ContentPtr^.VarType := SP_FOREACHSTRING;
+  StrVars[Idx]^.ContentPtr^.EachTokens := StrContent;
+  If StrContent <> '' Then
+    StrVars[Idx]^.ContentPtr^.Value := StrContent[1]
+  Else
+    StrVars[Idx]^.ContentPtr^.Value := '';
+
+  Result := Idx;
+
+End;
+
 Function  SP_UpdateFOREACHVar(Idx: Integer; const Name, ArrayName: aString; Var Step: aFloat; LoopLine, LoopStatement, St: Integer; Ptr: pLongWord; Var Error: TSP_ErrorCode): Integer;
 Var
   StrVar: Boolean;
@@ -4863,8 +4915,18 @@ Begin
 
     End Else Begin
 
-      ERRStr := Arrayname + '$';
-      Error.Code := SP_ERR_ARRAY_NOT_FOUND;
+      nIdx := SP_FindStrVar(ArrayName);
+      If nIdx > -1 Then Begin
+
+        Result := SP_UpdateFOREACHVar_Str(Idx +1, nName, StrVars[nIdx]^.ContentPtr^.Value, Step, LoopLine, LoopStatement, St, Ptr, Error);
+        Exit;
+
+      End Else Begin
+
+        ERRStr := Arrayname + '$';
+        Error.Code := SP_ERR_ARRAY_NOT_FOUND;
+
+      End;
 
     End;
 

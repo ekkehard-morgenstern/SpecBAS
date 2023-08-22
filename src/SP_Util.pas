@@ -126,9 +126,11 @@ Function  SP_Max(A, B: Integer): Integer;
 Function  InsertLiterals(Const s: aString): aString;
 Procedure Swap(Var a, b: Integer);
 Function  Limited(v, a, b: Integer): Integer;
+Procedure RevString(var s: aString);
 
 Var
 
+  InterpreterThreadAlive, RefreshThreadAlive: Boolean;
   SP_NeedDisplayUpdate: Boolean = False;
   LogFile: TFileStream;
   LogFileAssigned: Boolean = False;
@@ -1707,6 +1709,27 @@ Begin
     Result[l] := s[i];
     Inc(l);
   End;
+End;
+
+Procedure RevString(var s: aString);
+Var
+  l: Integer;
+  t: Byte;
+  sPtr, dPtr: pByte;
+Begin
+
+  l := Length(s);
+  sPtr := pByte(pNativeUInt(@s)^);
+  dPtr := pByte(NativeUInt(sPtr) + l -1);
+
+  While NativeUInt(dPtr) > NativeUInt(sPtr) Do Begin
+    t := sPtr^;
+    sPtr^ := dPtr^;
+    dPtr^ := t;
+    Dec(dPtr);
+    Inc(sPtr);
+  End;
+
 End;
 
 Initialization
